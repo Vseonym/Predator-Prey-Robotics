@@ -12,16 +12,19 @@ class SimpleController(Node):
 
         self.current_distance = None
 
+        self.robot_name = self.declare_parameter('robot_name', 'thymio2').value
+        self.get_logger().info(f"Controlling robot: {self.robot_name}")
+
         self.create_subscription(
             LaserScan,
-            '/thymio2/proximity/center',
+            f'/{self.robot_name}/proximity/center',
             self.sensor_callback,
             10
         )
 
         self.cmd_pub = self.create_publisher(
             Twist,
-            '/thymio2/cmd_vel',
+            f'/{self.robot_name}/cmd_vel',
             10
         )
 
@@ -37,7 +40,7 @@ class SimpleController(Node):
             value = msg.range_max
 
         self.current_distance = value
-        self.get_logger().info(f"distance={value:.4f}")
+        self.get_logger().info(f"{self.robot_name} distance={value:.4f}")
 
     def control_loop(self):
         if self.current_distance is None:
@@ -48,10 +51,10 @@ class SimpleController(Node):
 
         if self.current_distance < threshold:
             cmd.linear.x = -0.1
-            self.get_logger().info("BACKWARD")
+            self.get_logger().info(f"{self.robot_name}: BACKWARD")
         else:
             cmd.linear.x = 0.1
-            self.get_logger().info("FORWARD")
+            self.get_logger().info(f"{self.robot_name}: FORWARD")
 
         self.cmd_pub.publish(cmd)
 
