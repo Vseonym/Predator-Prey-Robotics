@@ -6,6 +6,7 @@
   <xacro:include filename="imu.urdf.xacro"/>
 
   <xacro:arg name="name" default="thymio2"/>
+  <xacro:arg name="body_color" default="Gazebo/White"/>
   <xacro:arg name="left_wheel_mu" default="100.0"/>
   <xacro:arg name="right_wheel_mu" default="100.0"/>
   <xacro:property name="wheel_axis" value="0.0935"/>
@@ -38,12 +39,12 @@
       </inertial>
       <visual>
         <geometry>
-          <box size="0.02 0.02 0.02"/>
+          <box size="0.01 0.01 0.01"/>
         </geometry>
       </visual>
       <collision>
         <geometry>
-          <box size="0.02 0.02 0.02"/>
+          <box size="0.01 0.01 0.01"/>
         </geometry>
       </collision>
     </link>
@@ -51,7 +52,7 @@
     <joint name="${tf_prefix}camera_joint" type="fixed">
       <parent link="${tf_prefix}base_link"/>
       <child link="${tf_prefix}camera_link"/>
-      <origin xyz="0.05 0 0.1" rpy="0 0 0"/>
+      <origin xyz="0.075 0 0.045" rpy="0 0 0"/>
     </joint>
 
     <link name="${tf_prefix}base_link">
@@ -93,6 +94,7 @@
       <selfCollide>false</selfCollide>
       <mu1>0.1</mu1>
       <mu2>0.1</mu2>
+      <material>$(arg body_color)</material>
     </gazebo>
 
     <xacro:wheel tf_prefix="${tf_prefix}" name="left" position="${wheel_axis * 0.5}" radius="${wheel_radius}" mass="${wheel_mass}" mu="$(arg left_wheel_mu)"/>
@@ -116,15 +118,15 @@
     </joint>
 
     <gazebo reference="${tf_prefix}camera_link">
-      <sensor type="camera" name="${tf_prefix}camera_sensor">
+      <sensor type="camera" name="camera_sensor">
         <always_on>true</always_on>
-        <update_rate>10.0</update_rate>
-        <visualize>true</visualize>
+        <update_rate>5.0</update_rate>
+        <visualize>false</visualize>
         <camera>
           <horizontal_fov>1.047</horizontal_fov>
           <image>
-            <width>1920</width>
-            <height>1080</height>
+            <width>320</width>
+            <height>240</height>
             <format>R8G8B8</format>
           </image>
           <clip>
