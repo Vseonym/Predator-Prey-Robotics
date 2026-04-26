@@ -20,13 +20,13 @@
               <samples>1</samples>
               <resolution>1</resolution>
               <min_angle>-${fov / 2}</min_angle>
-              <max_angle>-${fov / 2}</max_angle>
+              <max_angle>${fov / 2}</max_angle>
             </horizontal>
             <vertical>
               <samples>1</samples>
               <resolution>1</resolution>
-              <min_angle>-${fov / 2}</min_angle>
-              <max_angle>-${fov / 2}</max_angle>
+              <min_angle>0</min_angle>
+              <max_angle>0</max_angle>
             </vertical>
           </scan>
           <range>
@@ -41,13 +41,12 @@
           </noise>
         </ray>
         <plugin name="${group}_${name}_controller" filename="libgazebo_ros_ray_sensor.so">
-          <!-- TODO: check if field `radiation` is still valid-->
           <radiation_type>infrared</radiation_type>
           <ros>
             <namespace>${ns}</namespace>
             <argument>~/out:=${group}/${name}</argument>
           </ros>
-          <output_type>sensor_msgs/Range</output_type>
+          <output_type>sensor_msgs/LaserScan</output_type>
         </plugin>
       </sensor>
       <material>Gazebo/DarkGrey</material>
