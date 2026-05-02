@@ -1,10 +1,15 @@
 import numpy as np
 
-INPUT_SIZE = 6
-HIDDEN_SIZE = 6
+INPUT_SIZE = 11
+HIDDEN_SIZE = 8
 OUTPUT_SIZE = 2
 
-N_WEIGHTS = INPUT_SIZE * HIDDEN_SIZE + HIDDEN_SIZE + HIDDEN_SIZE * OUTPUT_SIZE + OUTPUT_SIZE
+N_WEIGHTS = (
+    INPUT_SIZE * HIDDEN_SIZE +
+    HIDDEN_SIZE +
+    HIDDEN_SIZE * OUTPUT_SIZE +
+    OUTPUT_SIZE
+)
 
 
 def unpack_weights(genome):
@@ -34,7 +39,7 @@ def nn_forward(features, genome):
     h = np.tanh(x @ w1 + b1)
     out = np.tanh(h @ w2 + b2)
 
-    max_wheel_speed = 20.0
+    max_wheel_speed = 8.0
 
     omega_left = out[0] * max_wheel_speed
     omega_right = out[1] * max_wheel_speed

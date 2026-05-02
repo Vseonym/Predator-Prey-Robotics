@@ -30,7 +30,8 @@ def start_all_predator_controllers():
 def stop_all():
     global processes
 
-    print("Stopping controllers...")
+    if len(processes) > 0:
+        print("Stopping controllers...")
 
     for p in processes:
         if p.poll() is None:
@@ -51,40 +52,38 @@ def save_policy(genome):
     tmp = "current_policy_tmp.npy"
     final = "current_policy.npy"
 
-    np.save(tmp, np.array(genome))
+    np.save(tmp, np.array(genome, dtype=np.float32))
     os.replace(tmp, final)
-
-
-def refresh_robots():
-    stop_all()
-    clear_simulation()
-    time.sleep(2.0)
-
-    spawn_default_world()
-    start_all_predator_controllers()
-    time.sleep(2.0)
 
 
 def run_episode(genome, episode_id):
     print(f"\n=== Episode {episode_id} ===")
 
-    # stop motion before reset
-    save_policy(np.zeros(N_WEIGHTS))
+    robot_names = [f"predator_{i}" for i in range(5)]
+
+    # Stop old controllers so no robot keeps old policy/state
+    stop_all()
     time.sleep(0.5)
 
+    # Reset simulation while robots are not controlled
     reset_world()
     time.sleep(1.5)
 
-    # apply candidate policy
+    # Save candidate policy before starting controllers
     save_policy(genome)
-    time.sleep(0.5)
+    time.sleep(0.3)
 
-    robot_names = [f"predator_{i}" for i in range(5)]
+    # Start controllers fresh with this candidate policy
+    start_all_predator_controllers()
+    time.sleep(1.0)
+
     fitness_node = CameraFitnessEvaluator(robot_names)
 
-    fitness = fitness_node.evaluate(duration=10.0, sample_dt=0.3)
-
-    fitness_node.destroy_node()
+    try:
+        fitness = fitness_node.evaluate(duration=20.0, sample_dt=0.2)
+    finally:
+        fitness_node.destroy_node()
+        stop_all()
 
     print(f"Episode {episode_id} fitness = {fitness}")
     return fitness
@@ -96,20 +95,23 @@ def main():
     best_fitness = -999999.0
     episode_id = 0
 
-    popsize = 5
-    generations = 12
-    restart_every = 3
+    popsize = 8
+    generations = 30
 
     es = cma.CMAEvolutionStrategy(
         np.zeros(N_WEIGHTS),
         0.5,
-        {"popsize": popsize}
+        {
+            "popsize": popsize,
+        }
     )
 
     try:
+        print("Clearing and spawning simulation...")
         clear_simulation()
+        time.sleep(1.0)
+
         spawn_default_world()
-        start_all_predator_controllers()
         time.sleep(2.0)
 
         for generation in range(generations):
@@ -126,12 +128,8 @@ def main():
 
                 if fitness > best_fitness:
                     best_fitness = fitness
-                    np.save("best_policy.npy", np.array(genome))
+                    np.save("best_policy.npy", np.array(genome, dtype=np.float32))
                     print(f"NEW BEST FITNESS: {best_fitness}")
-
-                if episode_id % restart_every == 0:
-                    print("Refreshing robots/controllers...")
-                    refresh_robots()
 
             es.tell(genomes, losses)
             es.disp()

@@ -55,7 +55,9 @@ def spawn_robot(name, x, y, color="Gazebo/White", yaw=math.pi / 2):
 
 
 def spawn_default_world():
-    for i in range(5):
-        spawn_robot(f"predator_{i}", i + 1, 0, "Gazebo/Red")
+    positions = [0.0, 0.3, 0.6, 0.9, 1.2]
 
-    spawn_robot("prey_0", 3, 3, "Gazebo/Green")
+    for idx, x in enumerate(positions):
+        spawn_robot(f"predator_{idx}", x, 0.0, "Gazebo/Red")
+
+    spawn_robot("prey_0", 0.6, 1.0, "Gazebo/Green")
