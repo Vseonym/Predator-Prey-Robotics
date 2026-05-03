@@ -68,6 +68,12 @@
           <sphere radius="0.009"/>
         </geometry>
       </collision>
+      <collision name="front_bottom_bumper_collision">
+        <origin xyz="0.086 0 0.012" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.018 0.090 0.018"/>
+        </geometry>
+      </collision>
       <visual>
         <origin xyz="0.0 0 0.0" rpy="0 0 0"/>
         <geometry>
@@ -120,7 +126,7 @@
     <gazebo reference="${tf_prefix}camera_link">
       <sensor type="camera" name="camera_sensor">
         <always_on>true</always_on>
-        <update_rate>5.0</update_rate>
+        <update_rate>$(arg odom_rate)</update_rate>
         <visualize>false</visualize>
         <camera>
           <horizontal_fov>1.047</horizontal_fov>

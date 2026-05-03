@@ -4,7 +4,7 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, Range
+from sensor_msgs.msg import Image, LaserScan
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 
@@ -36,7 +36,7 @@ class NNController(Node):
         self.wheel_separation = 0.0935
 
         self.max_wheel_omega = 8.0
-        self.forward_bias = 0.0
+        self.forward_bias = 0.5
         self.max_linear = 0.12
         self.max_angular = 2.0
 
@@ -50,9 +50,9 @@ class NNController(Node):
         for prox_name in self.prox_names:
             topic = f'/{self.robot_name}/proximity/{prox_name}'
             self.create_subscription(
-                Range,
+                LaserScan,
                 topic,
-                lambda msg, name=prox_name: self.proximity_callback(msg, name),
+                lambda msg, prox=prox_name: self.proximity_callback(msg, prox),
                 10
             )
 
@@ -60,9 +60,9 @@ class NNController(Node):
 
         self.create_timer(0.1, self.control_loop)
 
-        self.get_logger().info(
-            f"NN controller started for {self.robot_name} using {self.policy_path}"
-        )
+        # self.get_logger().info(
+        #     f"NN controller started for {self.robot_name} using {self.policy_path}"
+        # )
 
     def load_policy(self):
         if os.path.exists(self.policy_path):
@@ -85,20 +85,44 @@ class NNController(Node):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         self.camera_features = extract_features(frame)
 
-    def proximity_callback(self, msg, name):
-        if msg.max_range <= msg.min_range:
-            self.prox_values[name] = 0.0
+    def proximity_callback(self, msg, prox_name):
+        """
+        Convert LaserScan into normalized closeness.
+
+        0.0 = far / nothing detected
+        1.0 = very close
+        """
+
+        import math
+
+        if msg.range_max <= msg.range_min:
+            self.prox_values[prox_name] = 0.0
             return
 
-        clipped_range = max(msg.min_range, min(msg.range, msg.max_range))
+        valid_ranges = []
 
-        # 0.0 = nothing close, 1.0 = very close obstacle
+        for r in msg.ranges:
+            if math.isnan(r):
+                continue
+
+            if math.isinf(r):
+                continue
+
+            if msg.range_min <= r <= msg.range_max:
+                valid_ranges.append(r)
+
+        if not valid_ranges:
+            self.prox_values[prox_name] = 0.0
+            return
+
+        closest_range = min(valid_ranges)
+
         closeness = 1.0 - (
-            (clipped_range - msg.min_range) /
-            (msg.max_range - msg.min_range)
+            (closest_range - msg.range_min)
+            / (msg.range_max - msg.range_min)
         )
 
-        self.prox_values[name] = max(0.0, min(1.0, closeness))
+        self.prox_values[prox_name] = max(0.0, min(1.0, closeness))
 
     def clamp(self, value, low, high):
         return max(low, min(high, value))

@@ -73,13 +73,13 @@ def run_episode(genome, episode_id):
     save_policy(genome)
     time.sleep(0.3)
 
-    # Start controllers fresh with this candidate policy
-    start_all_predator_controllers()
-    time.sleep(1.0)
-
     fitness_node = CameraFitnessEvaluator(robot_names)
 
     try:
+        # Start controllers fresh with this candidate policy
+        start_all_predator_controllers()
+        time.sleep(1.0)
+
         fitness = fitness_node.evaluate(duration=20.0, sample_dt=0.2)
     finally:
         fitness_node.destroy_node()
@@ -95,8 +95,8 @@ def main():
     best_fitness = -999999.0
     episode_id = 0
 
-    popsize = 8
-    generations = 30
+    popsize = 6
+    generations = 20
 
     es = cma.CMAEvolutionStrategy(
         np.zeros(N_WEIGHTS),
