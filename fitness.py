@@ -235,7 +235,7 @@ class CameraFitnessEvaluator(Node):
             self.near_capture_count[robot_name] += 1
 
         # Training capture condition
-        area_ok = prey_area > 0.05
+        area_ok = prey_area > 0.20
         x_ok = abs_x < 0.50
         front_ok = front_close > 0.75
         visible_ok = prey_visible > 0.0
