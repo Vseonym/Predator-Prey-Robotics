@@ -32,6 +32,19 @@ def start_controller(name):
     )
     processes.append(p)
 
+def start_prey_controller():
+    p = subprocess.Popen(
+        [
+            "python3",
+            "prey_controller.py",
+            "--ros-args",
+            "-p",
+            "robot_name:=prey_0",
+            "-p",
+            "forward_speed:=0.07",
+        ]
+    )
+    processes.append(p)
 
 def start_all_predator_controllers():
     for i in range(5):
@@ -56,6 +69,7 @@ def stop_all():
             p.wait()
 
     subprocess.run(["pkill", "-f", "nn_controller.py"])
+    subprocess.run(["pkill", "-f", "prey_controller.py"])
     processes = []
 
 
@@ -89,6 +103,7 @@ def run_episode(genome, episode_id):
     try:
         # Start controllers fresh with this candidate policy
         start_all_predator_controllers()
+        start_prey_controller()
         time.sleep(1.0)
 
         fitness = fitness_node.evaluate(duration=20.0, sample_dt=0.2)
@@ -187,12 +202,12 @@ def main():
 
     init_training_log()
 
-    popsize = 6
-    generations = 20
+    popsize = 8
+    generations = 25
 
     es = cma.CMAEvolutionStrategy(
         np.zeros(N_WEIGHTS),
-        0.5,
+        0.45,
         {
             "popsize": popsize,
         }
