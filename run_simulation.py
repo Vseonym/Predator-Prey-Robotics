@@ -2,35 +2,55 @@ import subprocess
 import signal
 import time
 import os
+import csv
+from pathlib import Path
 
 import rclpy
 import numpy as np
-import cma
 
 from fitness import CameraFitnessEvaluator
 from spawn_robots import clear_simulation, reset_world, spawn_default_world
 from policy import N_WEIGHTS
 
-import csv
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 
 LOG_DIR = Path("training_logs")
 CSV_PATH = LOG_DIR / "fitness_history.csv"
 PLOT_PATH = LOG_DIR / "fitness_curve.png"
 
-
 processes = []
+
+
+# =========================
+# Genetic Algorithm settings
+# =========================
+
+POP_SIZE = 12              # For testing. Later try 24.
+ELITES = 3                 # For testing. Later try 4.
+GENERATIONS = 25
+
+INIT_SIGMA = 0.20          # Initial random weight scale
+MUTATION_SIGMA = 0.15      # Mutation strength
+
+EVALS_PER_CANDIDATE = 2    # For testing. Later try 3.
+EPISODE_DURATION = 20.0
 
 
 def start_controller(name):
     p = subprocess.Popen(
-        ["python3", "nn_controller.py", "--ros-args", "-p", f"robot_name:={name}"]
+        [
+            "python3",
+            "nn_controller.py",
+            "--ros-args",
+            "-p",
+            f"robot_name:={name}",
+        ]
     )
     processes.append(p)
+
 
 def start_prey_controller():
     p = subprocess.Popen(
@@ -40,11 +60,21 @@ def start_prey_controller():
             "--ros-args",
             "-p",
             "robot_name:=prey_0",
+
+            # Easier prey for early training.
+            # Increase these later after predators learn basic chasing.
             "-p",
-            "forward_speed:=0.07",
+            "max_forward_speed:=0.04",
+            "-p",
+            "min_forward_speed:=0.01",
+            "-p",
+            "max_angular_speed:=0.3",
+            "-p",
+            "pause_probability:=0.25",
         ]
     )
     processes.append(p)
+
 
 def start_all_predator_controllers():
     for i in range(5):
@@ -106,13 +136,46 @@ def run_episode(genome, episode_id):
         start_prey_controller()
         time.sleep(1.0)
 
-        fitness = fitness_node.evaluate(duration=20.0, sample_dt=0.2)
+        fitness = fitness_node.evaluate(
+            duration=EPISODE_DURATION,
+            sample_dt=0.2,
+        )
+
     finally:
         fitness_node.destroy_node()
         stop_all()
 
     print(f"Episode {episode_id} fitness = {fitness}")
     return fitness
+
+
+def evaluate_genome(genome, episode_id):
+    """
+    Evaluate the same genome over one or more episodes.
+    With EVALS_PER_CANDIDATE > 1, this reduces lucky-episode noise.
+    """
+    scores = []
+
+    for _ in range(EVALS_PER_CANDIDATE):
+        fitness = run_episode(genome, episode_id)
+        scores.append(fitness)
+        episode_id += 1
+
+    mean_fitness = float(np.mean(scores))
+    return mean_fitness, episode_id
+
+
+def make_child(parent_a, parent_b):
+    """
+    Blend crossover + Gaussian mutation.
+    """
+    alpha = np.random.rand(N_WEIGHTS)
+
+    child = alpha * parent_a + (1.0 - alpha) * parent_b
+    child += np.random.normal(0.0, MUTATION_SIGMA, size=N_WEIGHTS)
+
+    return child
+
 
 def init_training_log():
     LOG_DIR.mkdir(exist_ok=True)
@@ -127,6 +190,7 @@ def init_training_log():
             "loss",
             "generation_best_fitness",
             "generation_mean_fitness",
+            "generation_std_fitness",
             "best_so_far_fitness",
         ])
 
@@ -139,6 +203,7 @@ def append_training_log(
     loss,
     generation_best_fitness,
     generation_mean_fitness,
+    generation_std_fitness,
     best_so_far_fitness,
 ):
     with open(CSV_PATH, "a", newline="") as f:
@@ -151,6 +216,7 @@ def append_training_log(
             loss,
             generation_best_fitness,
             generation_mean_fitness,
+            generation_std_fitness,
             best_so_far_fitness,
         ])
 
@@ -187,12 +253,13 @@ def plot_training_curve():
     plt.plot(generations, best_so_far, label="Best so far")
     plt.xlabel("Generation")
     plt.ylabel("Fitness")
-    plt.title("CMA-ES Fitness Over Time")
+    plt.title("Genetic Algorithm Fitness Over Time")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(PLOT_PATH)
     plt.close()
+
 
 def main():
     rclpy.init()
@@ -202,15 +269,11 @@ def main():
 
     init_training_log()
 
-    popsize = 8
-    generations = 25
-
-    es = cma.CMAEvolutionStrategy(
-        np.zeros(N_WEIGHTS),
-        0.45,
-        {
-            "popsize": popsize,
-        }
+    # Initial population
+    population = np.random.normal(
+        0.0,
+        INIT_SIGMA,
+        size=(POP_SIZE, N_WEIGHTS),
     )
 
     try:
@@ -221,25 +284,22 @@ def main():
         spawn_default_world()
         time.sleep(2.0)
 
-        for generation in range(generations):
+        for generation in range(GENERATIONS):
             print(f"\n========== GENERATION {generation} ==========")
 
-            genomes = es.ask()
-            losses = []
             generation_fitnesses = []
             generation_records = []
 
-            for candidate_id, genome in enumerate(genomes):
-                fitness = run_episode(genome, episode_id)
+            for candidate_id, genome in enumerate(population):
+                fitness, episode_id = evaluate_genome(genome, episode_id)
                 loss = -fitness
 
-                losses.append(loss)
                 generation_fitnesses.append(fitness)
 
                 if fitness > best_fitness:
                     best_fitness = fitness
                     np.save("best_policy.npy", np.array(genome, dtype=np.float32))
-                    print(f"NEW BEST FITNESS: {best_fitness}")
+                    print(f"NEW BEST FITNESS: {best_fitness:.4f}")
 
                 generation_records.append({
                     "generation": generation,
@@ -249,10 +309,11 @@ def main():
                     "loss": loss,
                 })
 
-                episode_id += 1
+            generation_fitnesses = np.array(generation_fitnesses)
 
-            generation_best = max(generation_fitnesses)
+            generation_best = float(np.max(generation_fitnesses))
             generation_mean = float(np.mean(generation_fitnesses))
+            generation_std = float(np.std(generation_fitnesses))
 
             for record in generation_records:
                 append_training_log(
@@ -263,6 +324,7 @@ def main():
                     loss=record["loss"],
                     generation_best_fitness=generation_best,
                     generation_mean_fitness=generation_mean,
+                    generation_std_fitness=generation_std,
                     best_so_far_fitness=best_fitness,
                 )
 
@@ -272,14 +334,39 @@ def main():
                 f"Generation {generation}: "
                 f"best={generation_best:.4f}, "
                 f"mean={generation_mean:.4f}, "
+                f"std={generation_std:.4f}, "
                 f"best_so_far={best_fitness:.4f}"
             )
 
-            es.tell(genomes, losses)
-            es.disp()
+            # =====================
+            # GA selection + elitism
+            # =====================
+
+            # Sort candidates from best to worst
+            sorted_idx = np.argsort(generation_fitnesses)[::-1]
+
+            # Keep best genomes unchanged
+            elites = population[sorted_idx[:ELITES]].copy()
+
+            new_population = []
+
+            for elite in elites:
+                new_population.append(elite.copy())
+
+            # Create children until population is full
+            while len(new_population) < POP_SIZE:
+                parent_ids = np.random.choice(ELITES, size=2, replace=True)
+
+                parent_a = elites[parent_ids[0]]
+                parent_b = elites[parent_ids[1]]
+
+                child = make_child(parent_a, parent_b)
+                new_population.append(child)
+
+            population = np.array(new_population)
 
         print("\nTraining finished.")
-        print(f"Best fitness: {best_fitness}")
+        print(f"Best fitness: {best_fitness:.4f}")
 
     except KeyboardInterrupt:
         print("\nInterrupted!")
@@ -288,6 +375,7 @@ def main():
         stop_all()
         clear_simulation()
         rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
