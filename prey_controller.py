@@ -1,46 +1,78 @@
-import time
+import math
 import random
+import time
 
 import rclpy
 from rclpy.node import Node
+
+from cv_bridge import CvBridge
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import Image, LaserScan
+
+from vision import extract_features
 
 
-class PreyRandomController(Node):
+class PreyRuleBasedController(Node):
     def __init__(self):
-        super().__init__("prey_random_controller")
+        super().__init__("prey_rule_based_controller")
 
         self.robot_name = self.declare_parameter("robot_name", "prey_0").value
 
-        # Predators are capped at about 0.12 m/s.
-        # Keep prey clearly slower so predators can catch it.
+        # Speed setup:
+        # If real Thymio max is ~0.12 m/s, keep prey max here
+        # and restrict predators to 0.08 m/s in nn_controller.py.
         self.max_forward_speed = float(
-            self.declare_parameter("max_forward_speed", 0.075).value
+            self.declare_parameter("max_forward_speed", 0.12).value
+        )
+        self.cruise_speed = float(
+            self.declare_parameter("cruise_speed", 0.04).value
+        )
+        self.slow_speed = float(
+            self.declare_parameter("slow_speed", 0.02).value
         )
 
-        self.min_forward_speed = float(
-            self.declare_parameter("min_forward_speed", 0.025).value
-        )
-
-        # Moderate turning rate. Too high makes prey unrealistically evasive.
         self.max_angular_speed = float(
-            self.declare_parameter("max_angular_speed", 0.8).value
+            self.declare_parameter("max_angular_speed", 1.5).value
         )
 
-        # How often prey chooses a new random motion command.
-        self.min_change_time = float(
-            self.declare_parameter("min_change_time", 1.0).value
+        # Camera threshold only.
+        # Proximity does NOT use thresholds anymore.
+        self.predator_area_th = float(
+            self.declare_parameter("predator_area_th", 0.01).value
         )
 
-        self.max_change_time = float(
-            self.declare_parameter("max_change_time", 3.0).value
+        # Tiny epsilon to avoid floating-point noise.
+        # This still means "as soon as the sensor reads basically anything".
+        self.prox_active_eps = float(
+            self.declare_parameter("prox_active_eps", 0.0001).value
         )
 
-        # Probability that prey briefly stops.
-        # This helps predators catch it sometimes.
-        self.pause_probability = float(
-            self.declare_parameter("pause_probability", 0.15).value
-        )
+        self.bridge = CvBridge()
+        self.camera_features = None
+
+        self.prox_names = [
+            "center",
+            "center_left",
+            "center_right",
+            "left",
+            "right",
+            "rear_left",
+            "rear_right"
+        ]
+
+        self.prox_values = {name: 0.0 for name in self.prox_names}
+
+        camera_topic = f"/{self.robot_name}/camera_sensor/image_raw"
+        self.create_subscription(Image, camera_topic, self.image_callback, 10)
+
+        for prox_name in self.prox_names:
+            topic = f"/{self.robot_name}/proximity/{prox_name}"
+            self.create_subscription(
+                LaserScan,
+                topic,
+                lambda msg, prox=prox_name: self.proximity_callback(msg, prox),
+                10,
+            )
 
         self.cmd_pub = self.create_publisher(
             Twist,
@@ -48,70 +80,198 @@ class PreyRandomController(Node):
             10,
         )
 
-        self.current_linear = 0.0
-        self.current_angular = 0.0
-        self.next_change_time = self.get_clock().now().nanoseconds / 1e9
+        # Wandering state
+        self.wander_linear = self.cruise_speed
+        self.wander_angular = 0.0
+        self.next_wander_change = 0.0
 
         self.create_timer(0.1, self.control_loop)
 
-    def choose_new_motion(self):
-        now = self.get_clock().now().nanoseconds / 1e9
+    def image_callback(self, msg):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.camera_features = extract_features(frame)
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to process camera image: {exc}")
 
-        if random.random() < self.pause_probability:
-            # Brief pause.
-            self.current_linear = 0.0
-            self.current_angular = random.uniform(
-                -0.3 * self.max_angular_speed,
-                0.3 * self.max_angular_speed,
-            )
-        else:
-            # Random forward motion.
-            self.current_linear = random.uniform(
-                self.min_forward_speed,
-                self.max_forward_speed,
-            )
+    def proximity_callback(self, msg, prox_name):
+        if msg.range_max <= msg.range_min:
+            self.prox_values[prox_name] = 0.0
+            return
 
-            # Mostly gentle turns, sometimes sharper turns.
-            if random.random() < 0.7:
-                self.current_angular = random.uniform(
-                    -0.4 * self.max_angular_speed,
-                    0.4 * self.max_angular_speed,
-                )
-            else:
-                self.current_angular = random.uniform(
-                    -self.max_angular_speed,
-                    self.max_angular_speed,
-                )
+        valid_ranges = []
 
-        self.next_change_time = now + random.uniform(
-            self.min_change_time,
-            self.max_change_time,
+        for r in msg.ranges:
+            if math.isnan(r) or math.isinf(r):
+                continue
+
+            if msg.range_min <= r <= msg.range_max:
+                valid_ranges.append(r)
+
+        if not valid_ranges:
+            self.prox_values[prox_name] = 0.0
+            return
+
+        closest_range = min(valid_ranges)
+
+        closeness = 1.0 - (
+            (closest_range - msg.range_min) / (msg.range_max - msg.range_min)
         )
 
-    def control_loop(self):
+        self.prox_values[prox_name] = max(0.0, min(1.0, closeness))
+
+    def clamp(self, value, low, high):
+        return max(low, min(high, value))
+
+    def is_active(self, value):
+        return value > self.prox_active_eps
+
+    def get_proximity_groups(self):
+        front = max(
+            self.prox_values.get("center", 0.0),
+            self.prox_values.get("center_left", 0.0),
+            self.prox_values.get("center_right", 0.0),
+        )
+
+        left = max(
+            self.prox_values.get("left", 0.0),
+            self.prox_values.get("center_left", 0.0),
+        )
+
+        right = max(
+            self.prox_values.get("right", 0.0),
+            self.prox_values.get("center_right", 0.0),
+        )
+
+        back = max(
+            self.prox_values.get("rear_left", 0.0),
+            self.prox_values.get("rear_right", 0.0),
+        )
+
+        return front, left, right, back
+
+    def update_wander(self):
         now = self.get_clock().now().nanoseconds / 1e9
 
-        if now >= self.next_change_time:
-            self.choose_new_motion()
+        if now < self.next_wander_change:
+            return
 
+        self.wander_linear = random.uniform(self.slow_speed, self.cruise_speed)
+        self.wander_angular = random.uniform(
+            -0.35 * self.max_angular_speed,
+            0.35 * self.max_angular_speed,
+        )
+
+        self.next_wander_change = now + random.uniform(1.0, 3.0)
+
+    def publish_cmd(self, linear, angular):
         cmd = Twist()
-        cmd.linear.x = self.current_linear
-        cmd.angular.z = self.current_angular
+        cmd.linear.x = self.clamp(linear, 0.0, self.max_forward_speed)
+        cmd.angular.z = self.clamp(
+            angular,
+            -self.max_angular_speed,
+            self.max_angular_speed,
+        )
         self.cmd_pub.publish(cmd)
+
+    def control_loop(self):
+        front, left, right, back = self.get_proximity_groups()
+
+        front_active = self.is_active(front)
+        left_active = self.is_active(left)
+        right_active = self.is_active(right)
+        back_active = self.is_active(back)
+
+        red_visible = 0.0
+        red_x = 0.0
+        red_area = 0.0
+
+        if self.camera_features is not None:
+            # extract_features returns:
+            # [prey_visible, prey_x, prey_area, red_visible, red_x, red_area]
+            red_visible = self.camera_features[3]
+            red_x = self.camera_features[4]
+            red_area = self.camera_features[5]
+
+        predator_visible = red_visible > 0.0 and red_area > self.predator_area_th
+
+        # 1. Any proximity sensor reads something.
+        # This block has priority over camera because nearby danger is urgent.
+        if front_active or left_active or right_active or back_active:
+
+            # Something is directly in front.
+            # Do not run straight forward into it.
+            # Turn away from the more blocked side.
+            if front_active:
+                linear = self.slow_speed
+
+                if left > right:
+                    angular = -self.max_angular_speed
+                elif right > left:
+                    angular = self.max_angular_speed
+                else:
+                    angular = random.choice([-1.0, 1.0]) * self.max_angular_speed
+
+                self.publish_cmd(linear, angular)
+                return
+
+            # Something is behind or on the sides.
+            # Run at maximum speed.
+            linear = self.max_forward_speed
+
+            # If left side reads something, turn right.
+            # If right side reads something, turn left.
+            angular = (right - left) * self.max_angular_speed
+
+            # If only rear/back sensors are active, run forward fast with small evasive turn.
+            if back_active and not left_active and not right_active:
+                angular = random.choice([-1.0, 1.0]) * 0.4 * self.max_angular_speed
+
+            self.publish_cmd(linear, angular)
+            return
+
+        # 2. Predator visible in camera.
+        # red_x < 0 means predator is on left side of image.
+        # For ROS angular.z:
+        #   negative -> turn right
+        #   positive -> turn left
+        # So angular = red_x turns away from predator.
+        if predator_visible:
+            urgency = min(1.0, red_area / 0.10)
+
+            angular = red_x * self.max_angular_speed
+
+            # If predator is centered, pick a strong escape direction.
+            if abs(red_x) < 0.15:
+                angular = random.choice([-1.0, 1.0]) * self.max_angular_speed
+
+            # If predator is large/centered, turn first instead of driving into it.
+            if urgency > 0.5 or abs(red_x) < 0.25:
+                linear = self.slow_speed
+            else:
+                linear = self.cruise_speed
+
+            self.publish_cmd(linear, angular)
+            return
+
+        # 3. Nothing dangerous: wander.
+        self.update_wander()
+        self.publish_cmd(self.wander_linear, self.wander_angular)
 
     def publish_stop(self):
-        cmd = Twist()
-        self.cmd_pub.publish(cmd)
+        self.publish_cmd(0.0, 0.0)
 
 
 def main():
     rclpy.init()
-    node = PreyRandomController()
+    node = PreyRuleBasedController()
 
     try:
         rclpy.spin(node)
+
     except KeyboardInterrupt:
         pass
+
     finally:
         try:
             if rclpy.ok():

@@ -37,7 +37,7 @@ class NNController(Node):
 
         self.max_wheel_omega = 8.0
         self.forward_bias = 0.5
-        self.max_linear = 0.12
+        self.max_linear = 0.08
         self.max_angular = 2.0
 
         self.genome = self.load_policy()
