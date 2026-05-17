@@ -59,18 +59,19 @@ def start_prey_controller():
             "prey_controller.py",
             "--ros-args",
             "-p",
-            "robot_name:=prey_0",
-
-            # Easier prey for early training.
-            # Increase these later after predators learn basic chasing.
+            f"robot_name:=prey_0",
             "-p",
-            "max_forward_speed:=0.04",
+            f"max_forward_speed:=0.12",
             "-p",
-            "min_forward_speed:=0.01",
+            "cruise_speed:=0.04",
             "-p",
-            "max_angular_speed:=0.3",
+            "slow_speed:=0.02",
             "-p",
-            "pause_probability:=0.25",
+            "max_angular_speed:=1.5",
+            "-p",
+            "predator_area_th:=0.01",
+            "-p",
+            "prox_active_eps:=0.0001",
         ]
     )
     processes.append(p)

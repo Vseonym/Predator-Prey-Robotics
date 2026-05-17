@@ -12,6 +12,16 @@ from sensor_msgs.msg import Image, LaserScan
 from vision import extract_features
 
 
+# =========================
+# Flee memory settings
+# =========================
+
+# How long prey keeps fleeing after danger was last detected.
+# 1.0 = continue fleeing for 1 second
+# 2.0 = continue fleeing for 2 seconds
+FLEE_DURATION = 3
+
+
 class PreyRuleBasedController(Node):
     def __init__(self):
         super().__init__("prey_rule_based_controller")
@@ -36,13 +46,11 @@ class PreyRuleBasedController(Node):
         )
 
         # Camera threshold only.
-        # Proximity does NOT use thresholds anymore.
         self.predator_area_th = float(
             self.declare_parameter("predator_area_th", 0.01).value
         )
 
-        # Tiny epsilon to avoid floating-point noise.
-        # This still means "as soon as the sensor reads basically anything".
+        # Proximity threshold.
         self.prox_active_eps = float(
             self.declare_parameter("prox_active_eps", 0.0001).value
         )
@@ -57,7 +65,7 @@ class PreyRuleBasedController(Node):
             "left",
             "right",
             "rear_left",
-            "rear_right"
+            "rear_right",
         ]
 
         self.prox_values = {name: 0.0 for name in self.prox_names}
@@ -84,6 +92,11 @@ class PreyRuleBasedController(Node):
         self.wander_linear = self.cruise_speed
         self.wander_angular = 0.0
         self.next_wander_change = 0.0
+
+        # Flee memory state
+        self.flee_until_time = 0.0
+        self.flee_linear = 0.0
+        self.flee_angular = 0.0
 
         self.create_timer(0.1, self.control_loop)
 
@@ -125,6 +138,21 @@ class PreyRuleBasedController(Node):
 
     def is_active(self, value):
         return value > self.prox_active_eps
+
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def start_flee(self, linear, angular):
+        """
+        Start or refresh flee memory.
+        The prey will keep publishing this command for FLEE_DURATION seconds.
+        """
+        self.flee_until_time = self.now_seconds() + FLEE_DURATION
+        self.flee_linear = linear
+        self.flee_angular = angular
+
+    def is_fleeing(self):
+        return self.now_seconds() < self.flee_until_time
 
     def get_proximity_groups(self):
         front = max(
@@ -198,20 +226,30 @@ class PreyRuleBasedController(Node):
         # 1. Any proximity sensor reads something.
         # This block has priority over camera because nearby danger is urgent.
         if front_active or left_active or right_active or back_active:
+            print(
+                f"PROX FIRED | "
+                f"front={front:.3f} active={front_active} | "
+                f"left={left:.3f} active={left_active} | "
+                f"right={right:.3f} active={right_active} | "
+                f"back={back:.3f} active={back_active} | "
+                f"raw={self.prox_values}",
+                flush=True,
+            )
 
             # Something is directly in front.
-            # Do not run straight forward into it.
-            # Turn away from the more blocked side.
+            # Move while turning instead of spinning almost in place.
             if front_active:
-                linear = self.slow_speed
+
+                linear = max(self.cruise_speed, 0.05)
 
                 if left > right:
-                    angular = -self.max_angular_speed
+                    angular = -0.45 * self.max_angular_speed
                 elif right > left:
-                    angular = self.max_angular_speed
+                    angular = 0.45 * self.max_angular_speed
                 else:
-                    angular = random.choice([-1.0, 1.0]) * self.max_angular_speed
+                    angular = random.choice([-1.0, 1.0]) * 0.45 * self.max_angular_speed
 
+                self.start_flee(linear, angular)
                 self.publish_cmd(linear, angular)
                 return
 
@@ -219,42 +257,67 @@ class PreyRuleBasedController(Node):
             # Run at maximum speed.
             linear = self.max_forward_speed
 
-            # If left side reads something, turn right.
-            # If right side reads something, turn left.
-            angular = (right - left) * self.max_angular_speed
+            rear_left = self.prox_values.get("rear_left", 0.0)
+            rear_right = self.prox_values.get("rear_right", 0.0)
 
-            # If only rear/back sensors are active, run forward fast with small evasive turn.
+            # If only rear/back sensors are active, run mostly straight.
             if back_active and not left_active and not right_active:
-                angular = random.choice([-1.0, 1.0]) * 0.4 * self.max_angular_speed
+                rear_balance = rear_right - rear_left
 
+                if abs(rear_balance) < 0.08:
+                    angular = 0.0
+                else:
+                    angular = 0.45 * rear_balance * self.max_angular_speed
+
+            else:
+                # If left side reads something, turn right.
+                # If right side reads something, turn left.
+                angular = (right - left) * self.max_angular_speed
+
+            self.start_flee(linear, angular)
             self.publish_cmd(linear, angular)
             return
 
         # 2. Predator visible in camera.
-        # red_x < 0 means predator is on left side of image.
-        # For ROS angular.z:
-        #   negative -> turn right
-        #   positive -> turn left
-        # So angular = red_x turns away from predator.
         if predator_visible:
+
             urgency = min(1.0, red_area / 0.10)
 
+            # red_x < 0 means predator is on left side of image.
+            # For ROS angular.z:
+            #   negative -> turn right
+            #   positive -> turn left
+            # So angular = red_x turns away from predator.
             angular = red_x * self.max_angular_speed
 
-            # If predator is centered, pick a strong escape direction.
+            # If predator is centered, pick a moderate escape direction.
             if abs(red_x) < 0.15:
-                angular = random.choice([-1.0, 1.0]) * self.max_angular_speed
+                angular = random.choice([-1.0, 1.0]) * 0.45 * self.max_angular_speed
 
-            # If predator is large/centered, turn first instead of driving into it.
+            # Move while turning instead of rotating in place.
             if urgency > 0.5 or abs(red_x) < 0.25:
-                linear = self.slow_speed
+                linear = max(self.cruise_speed, 0.05)
             else:
                 linear = self.cruise_speed
 
+            self.start_flee(linear, angular)
             self.publish_cmd(linear, angular)
             return
 
-        # 3. Nothing dangerous: wander.
+        # 3. Continue fleeing briefly after danger disappeared.
+        if self.is_fleeing():
+            print(
+                f"FLEE MEMORY | "
+                f"linear={self.flee_linear:.3f} "
+                f"angular={self.flee_angular:.3f} "
+                f"remaining={self.flee_until_time - self.now_seconds():.2f}s",
+                flush=True,
+            )
+
+            self.publish_cmd(self.flee_linear, self.flee_angular)
+            return
+
+        # 4. Nothing dangerous: wander.
         self.update_wander()
         self.publish_cmd(self.wander_linear, self.wander_angular)
 
