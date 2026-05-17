@@ -35,8 +35,62 @@ GENERATIONS = 25
 INIT_SIGMA = 0.20          # Initial random weight scale
 MUTATION_SIGMA = 0.15      # Mutation strength
 
-EVALS_PER_CANDIDATE = 2    # For testing. Later try 3.
-EPISODE_DURATION = 20.0
+EVALS_PER_CANDIDATE = 1    # For testing. Later try 3.
+
+# Episode duration includes the scripted setup/warmup phase.
+EPISODE_DURATION = 32.0
+
+
+# =========================
+# Scripted spread settings
+# =========================
+#
+# Passed to nn_controller.py.
+#
+# Timeline from predator controller start:
+#
+#   0 -> SPREAD_START_DELAY:
+#       stop/wait so cmd_vel connections are ready
+#
+#   SPREAD_START_DELAY -> SPREAD_START_DELAY + SPREAD_TURN_DURATION:
+#       rotate in place once
+#
+#   after turn -> SPREAD_START_DELAY + SPREAD_DURATION:
+#       drive straight with role-based speed
+#
+#   after SPREAD_START_DELAY + SPREAD_DURATION:
+#       switch to NN
+#
+# Keep spread short. The NN now receives robot role input, so it can learn
+# role-dependent behaviour after the initial setup.
+SPREAD_START_DELAY = 2.0
+SPREAD_DURATION = 15.0
+SPREAD_TURN_DURATION = 0.8
+
+# Edges move faster than center to create half-circle/fan shape.
+SPREAD_EDGE_LINEAR = 0.08
+SPREAD_MID_LINEAR = 0.045
+SPREAD_CENTER_LINEAR = 0.035
+
+SPREAD_TURN_ANGULAR = 0.45
+
+# If left/right is reversed in Gazebo, change this to -1.0.
+SPREAD_ANGULAR_SCALE = 1.0
+
+# Prey waits briefly so it does not escape while predator cmd_vel topics connect.
+# Keep this short; do not freeze prey for the whole spread.
+PREY_START_DELAY = SPREAD_START_DELAY
+
+# Time between starting controllers and starting fitness evaluation.
+CONTROLLER_STARTUP_DELAY = 1.0
+
+# Ignore scripted predator setup in the fitness.
+# Since run_episode sleeps CONTROLLER_STARTUP_DELAY after starting controllers,
+# this is the remaining unscored time after fitness_node.evaluate() begins.
+FITNESS_WARMUP = max(
+    0.0,
+    SPREAD_START_DELAY + SPREAD_DURATION - CONTROLLER_STARTUP_DELAY,
+)
 
 
 def start_controller(name):
@@ -47,6 +101,22 @@ def start_controller(name):
             "--ros-args",
             "-p",
             f"robot_name:={name}",
+            "-p",
+            f"spread_start_delay:={SPREAD_START_DELAY}",
+            "-p",
+            f"spread_duration:={SPREAD_DURATION}",
+            "-p",
+            f"spread_turn_duration:={SPREAD_TURN_DURATION}",
+            "-p",
+            f"spread_edge_linear:={SPREAD_EDGE_LINEAR}",
+            "-p",
+            f"spread_mid_linear:={SPREAD_MID_LINEAR}",
+            "-p",
+            f"spread_center_linear:={SPREAD_CENTER_LINEAR}",
+            "-p",
+            f"spread_turn_angular:={SPREAD_TURN_ANGULAR}",
+            "-p",
+            f"spread_angular_scale:={SPREAD_ANGULAR_SCALE}",
         ]
     )
     processes.append(p)
@@ -60,6 +130,8 @@ def start_prey_controller():
             "--ros-args",
             "-p",
             f"robot_name:=prey_0",
+            "-p",
+            f"start_delay:={PREY_START_DELAY}",
             "-p",
             f"max_forward_speed:=0.12",
             "-p",
@@ -135,11 +207,14 @@ def run_episode(genome, episode_id):
         # Start controllers fresh with this candidate policy
         start_all_predator_controllers()
         start_prey_controller()
-        time.sleep(1.0)
+
+        # Give ROS nodes a moment to start before fitness evaluation begins.
+        time.sleep(CONTROLLER_STARTUP_DELAY)
 
         fitness = fitness_node.evaluate(
             duration=EPISODE_DURATION,
             sample_dt=0.2,
+            warmup_duration=FITNESS_WARMUP,
         )
 
     finally:
@@ -284,6 +359,20 @@ def main():
 
         spawn_default_world()
         time.sleep(2.0)
+
+        print("\nSpread + role-input settings:")
+        print(f"  N_WEIGHTS={N_WEIGHTS}")
+        print(f"  SPREAD_START_DELAY={SPREAD_START_DELAY}")
+        print(f"  SPREAD_DURATION={SPREAD_DURATION}")
+        print(f"  SPREAD_TURN_DURATION={SPREAD_TURN_DURATION}")
+        print(f"  SPREAD_EDGE_LINEAR={SPREAD_EDGE_LINEAR}")
+        print(f"  SPREAD_MID_LINEAR={SPREAD_MID_LINEAR}")
+        print(f"  SPREAD_CENTER_LINEAR={SPREAD_CENTER_LINEAR}")
+        print(f"  SPREAD_TURN_ANGULAR={SPREAD_TURN_ANGULAR}")
+        print(f"  SPREAD_ANGULAR_SCALE={SPREAD_ANGULAR_SCALE}")
+        print(f"  PREY_START_DELAY={PREY_START_DELAY}")
+        print(f"  FITNESS_WARMUP={FITNESS_WARMUP}")
+        print(f"  EPISODE_DURATION={EPISODE_DURATION}")
 
         for generation in range(GENERATIONS):
             print(f"\n========== GENERATION {generation} ==========")

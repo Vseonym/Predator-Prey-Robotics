@@ -1,6 +1,28 @@
 import numpy as np
 
-INPUT_SIZE = 11
+# Inputs:
+# 0  prey_visible
+# 1  prey_x
+# 2  prey_area
+# 3  red_visible
+# 4  red_x
+# 5  red_area
+# 6  proximity_center
+# 7  proximity_center_left
+# 8  proximity_center_right
+# 9  proximity_left
+# 10 proximity_right
+# 11 robot_role_value
+#
+# robot_role_value:
+#   predator_0 = -1.0
+#   predator_1 = -0.5
+#   predator_2 =  0.0
+#   predator_3 =  0.5
+#   predator_4 =  1.0
+#
+# This allows one shared NN policy to learn role-dependent behaviour.
+INPUT_SIZE = 12
 HIDDEN_SIZE = 8
 OUTPUT_SIZE = 2
 

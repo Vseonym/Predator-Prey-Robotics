@@ -19,6 +19,58 @@ class NNController(Node):
         self.robot_name = self.declare_parameter('robot_name', 'predator_0').value
         self.policy_path = self.declare_parameter('policy_path', 'current_policy.npy').value
 
+        # =========================
+        # Scripted spread settings
+        # =========================
+        #
+        # Total scripted behaviour:
+        #
+        #   0 -> spread_start_delay:
+        #       publish stop so Gazebo/ROS can connect cmd_vel.
+        #
+        #   spread_start_delay -> spread_start_delay + spread_turn_duration:
+        #       rotate in place once according to robot role.
+        #
+        #   after rotation -> spread_start_delay + spread_duration:
+        #       drive straight according to robot role.
+        #
+        #   after spread_start_delay + spread_duration:
+        #       switch to NN policy.
+        #
+        # The NN also receives robot_role_value as input, so after the
+        # scripted spread it can learn role-specific behaviour.
+        #
+        self.spread_start_delay = float(
+            self.declare_parameter('spread_start_delay', 2.0).value
+        )
+        self.spread_duration = float(
+            self.declare_parameter('spread_duration', 15.0).value
+        )
+        self.spread_turn_duration = float(
+            self.declare_parameter('spread_turn_duration', 0.8).value
+        )
+
+        self.spread_edge_linear = float(
+            self.declare_parameter('spread_edge_linear', 0.055).value
+        )
+        self.spread_mid_linear = float(
+            self.declare_parameter('spread_mid_linear', 0.045).value
+        )
+        self.spread_center_linear = float(
+            self.declare_parameter('spread_center_linear', 0.035).value
+        )
+
+        self.spread_turn_angular = float(
+            self.declare_parameter('spread_turn_angular', 0.45).value
+        )
+
+        # Set to -1.0 if left/right is reversed in Gazebo.
+        self.spread_angular_scale = float(
+            self.declare_parameter('spread_angular_scale', 1.0).value
+        )
+
+        self.start_time = self.now_seconds()
+
         self.bridge = CvBridge()
         self.camera_features = None
 
@@ -60,9 +112,8 @@ class NNController(Node):
 
         self.create_timer(0.1, self.control_loop)
 
-        # self.get_logger().info(
-        #     f"NN controller started for {self.robot_name} using {self.policy_path}"
-        # )
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def load_policy(self):
         if os.path.exists(self.policy_path):
@@ -127,6 +178,24 @@ class NNController(Node):
     def clamp(self, value, low, high):
         return max(low, min(high, value))
 
+    def get_robot_role_value(self):
+        """
+        Normalized role input for the NN.
+
+        This is not a hardcoded action. It only tells the shared policy
+        which predator it controls.
+        """
+
+        role_values = {
+            "predator_0": -1.0,
+            "predator_1": -0.5,
+            "predator_2": 0.0,
+            "predator_3": 0.5,
+            "predator_4": 1.0,
+        }
+
+        return role_values.get(self.robot_name, 0.0)
+
     def get_inputs(self):
         if self.camera_features is None:
             return None
@@ -143,13 +212,105 @@ class NNController(Node):
             self.prox_values["center_right"],
             self.prox_values["left"],
             self.prox_values["right"],
+            self.get_robot_role_value(),
         ], dtype=np.float32)
 
     def publish_stop(self):
         stop = Twist()
         self.cmd_pub.publish(stop)
 
+    def get_spread_turn_role(self):
+        """
+        Turn roles for initial half-circle/fan formation.
+
+        Positive angular.z = left turn in ROS convention.
+        If left/right is reversed in your Gazebo view, set
+        spread_angular_scale to -1.0 in run_simulation.py.
+        """
+
+        role_turns = {
+            "predator_0": 0.50,
+            "predator_1": 0.25,
+            "predator_2": 0.00,
+            "predator_3": -0.25,
+            "predator_4": -0.50,
+        }
+
+        return role_turns.get(self.robot_name, 0.0)
+
+    def get_spread_linear_role(self):
+        """
+        Forward speed roles.
+
+        Edges are faster than middle robots.
+        Center is slowest so it stays closer to the center line.
+        """
+
+        role_linear = {
+            "predator_0": self.spread_edge_linear,
+            "predator_1": self.spread_mid_linear,
+            "predator_2": self.spread_center_linear,
+            "predator_3": self.spread_mid_linear,
+            "predator_4": self.spread_edge_linear,
+        }
+
+        return role_linear.get(self.robot_name, self.spread_center_linear)
+
+    def get_scripted_spread_command(self):
+        """
+        Initial spread command.
+
+        Phase 0:
+            stop/wait so cmd_vel connection is ready
+
+        Phase 1:
+            rotate in place once
+
+        Phase 2:
+            drive straight with role-based speed
+        """
+
+        elapsed = self.now_seconds() - self.start_time
+
+        # Phase 0: wait for Gazebo/ROS command connections.
+        if elapsed < self.spread_start_delay:
+            return 0.0, 0.0
+
+        spread_elapsed = elapsed - self.spread_start_delay
+
+        # Phase 1: rotate in place once.
+        if spread_elapsed < self.spread_turn_duration:
+            linear_x = 0.0
+            angular_z = (
+                self.get_spread_turn_role()
+                * self.spread_turn_angular
+                * self.spread_angular_scale
+            )
+            return linear_x, angular_z
+
+        # Phase 2: stop rotating and drive straight.
+        linear_x = self.get_spread_linear_role()
+        angular_z = 0.0
+
+        return linear_x, angular_z
+
     def control_loop(self):
+        elapsed = self.now_seconds() - self.start_time
+
+        # Scripted setup:
+        # wait -> rotate in place -> drive straight -> switch to NN.
+        scripted_total_duration = self.spread_start_delay + self.spread_duration
+
+        if elapsed < scripted_total_duration:
+            linear_x, angular_z = self.get_scripted_spread_command()
+
+            cmd = Twist()
+            cmd.linear.x = self.clamp(linear_x, 0.0, self.max_linear)
+            cmd.angular.z = self.clamp(angular_z, -self.max_angular, self.max_angular)
+
+            self.cmd_pub.publish(cmd)
+            return
+
         features = self.get_inputs()
 
         if features is None:

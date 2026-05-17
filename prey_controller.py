@@ -28,6 +28,14 @@ class PreyRuleBasedController(Node):
 
         self.robot_name = self.declare_parameter("robot_name", "prey_0").value
 
+        # Delay before prey starts moving.
+        # This gives predator controllers time to connect and perform the initial
+        # setup rotation. Keep this short; do not freeze prey for the whole spread.
+        self.start_delay = float(
+            self.declare_parameter("start_delay", 2.0).value
+        )
+        self.start_time = self.now_seconds()
+
         # Speed setup:
         # If real Thymio max is ~0.12 m/s, keep prey max here
         # and restrict predators to 0.08 m/s in nn_controller.py.
@@ -203,6 +211,14 @@ class PreyRuleBasedController(Node):
         self.cmd_pub.publish(cmd)
 
     def control_loop(self):
+        elapsed = self.now_seconds() - self.start_time
+
+        # Initial wait so prey does not escape before predator controllers
+        # have connected and completed the first setup rotation.
+        if elapsed < self.start_delay:
+            self.publish_cmd(0.0, 0.0)
+            return
+
         front, left, right, back = self.get_proximity_groups()
 
         front_active = self.is_active(front)

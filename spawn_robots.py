@@ -60,4 +60,4 @@ def spawn_default_world():
     for idx, x in enumerate(positions):
         spawn_robot(f"predator_{idx}", x, 0.0, "Gazebo/Red")
 
-    spawn_robot("prey_0", 0.6, 1.0, "Gazebo/Green")
+    spawn_robot("prey_0", 0.6, 0.5, "Gazebo/Green")
