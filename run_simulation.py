@@ -28,17 +28,20 @@ processes = []
 # Genetic Algorithm settings
 # =========================
 
-POP_SIZE = 12              # For testing. Later try 24.
-ELITES = 3                 # For testing. Later try 4.
-GENERATIONS = 25
+POP_SIZE = 12
+ELITES = 2
+GENERATIONS = 35
 
-INIT_SIGMA = 0.20          # Initial random weight scale
-MUTATION_SIGMA = 0.15      # Mutation strength
+INIT_SIGMA = 0.20
+MUTATION_SIGMA = 0.12
 
-EVALS_PER_CANDIDATE = 1    # For testing. Later try 3.
+# 1 is faster. Use 2 for a more reliable final run.
+EVALS_PER_CANDIDATE = 1
 
 # Episode duration includes the scripted setup/warmup phase.
-EPISODE_DURATION = 32.0
+# With 15s spread and 2s start delay, fitness starts after ~16s,
+# so 45s gives the NN around 29 seconds of scored behaviour.
+EPISODE_DURATION = 40.0
 
 
 # =========================
@@ -61,32 +64,27 @@ EPISODE_DURATION = 32.0
 #   after SPREAD_START_DELAY + SPREAD_DURATION:
 #       switch to NN
 #
-# Keep spread short. The NN now receives robot role input, so it can learn
-# role-dependent behaviour after the initial setup.
 SPREAD_START_DELAY = 2.0
 SPREAD_DURATION = 15.0
-SPREAD_TURN_DURATION = 0.8
+SPREAD_TURN_DURATION = 1.2
 
-# Edges move faster than center to create half-circle/fan shape.
+# Edges move faster than center to get over / around the prey.
 SPREAD_EDGE_LINEAR = 0.08
 SPREAD_MID_LINEAR = 0.045
 SPREAD_CENTER_LINEAR = 0.035
 
-SPREAD_TURN_ANGULAR = 0.45
+SPREAD_TURN_ANGULAR = 0.75
 
 # If left/right is reversed in Gazebo, change this to -1.0.
 SPREAD_ANGULAR_SCALE = 1.0
 
 # Prey waits briefly so it does not escape while predator cmd_vel topics connect.
-# Keep this short; do not freeze prey for the whole spread.
 PREY_START_DELAY = SPREAD_START_DELAY
 
 # Time between starting controllers and starting fitness evaluation.
 CONTROLLER_STARTUP_DELAY = 1.0
 
 # Ignore scripted predator setup in the fitness.
-# Since run_episode sleeps CONTROLLER_STARTUP_DELAY after starting controllers,
-# this is the remaining unscored time after fitness_node.evaluate() begins.
 FITNESS_WARMUP = max(
     0.0,
     SPREAD_START_DELAY + SPREAD_DURATION - CONTROLLER_STARTUP_DELAY,
@@ -189,26 +187,21 @@ def run_episode(genome, episode_id):
 
     robot_names = [f"predator_{i}" for i in range(5)]
 
-    # Stop old controllers so no robot keeps old policy/state
     stop_all()
     time.sleep(0.5)
 
-    # Reset simulation while robots are not controlled
     reset_world()
     time.sleep(1.5)
 
-    # Save candidate policy before starting controllers
     save_policy(genome)
     time.sleep(0.3)
 
     fitness_node = CameraFitnessEvaluator(robot_names)
 
     try:
-        # Start controllers fresh with this candidate policy
         start_all_predator_controllers()
         start_prey_controller()
 
-        # Give ROS nodes a moment to start before fitness evaluation begins.
         time.sleep(CONTROLLER_STARTUP_DELAY)
 
         fitness = fitness_node.evaluate(
@@ -226,10 +219,6 @@ def run_episode(genome, episode_id):
 
 
 def evaluate_genome(genome, episode_id):
-    """
-    Evaluate the same genome over one or more episodes.
-    With EVALS_PER_CANDIDATE > 1, this reduces lucky-episode noise.
-    """
     scores = []
 
     for _ in range(EVALS_PER_CANDIDATE):
@@ -242,9 +231,6 @@ def evaluate_genome(genome, episode_id):
 
 
 def make_child(parent_a, parent_b):
-    """
-    Blend crossover + Gaussian mutation.
-    """
     alpha = np.random.rand(N_WEIGHTS)
 
     child = alpha * parent_a + (1.0 - alpha) * parent_b
@@ -310,7 +296,6 @@ def plot_training_curve():
         for row in reader:
             generation = int(row["generation"])
 
-            # only keep one row per generation for generation-level curves
             if generation == last_seen_generation:
                 continue
 
@@ -345,7 +330,6 @@ def main():
 
     init_training_log()
 
-    # Initial population
     population = np.random.normal(
         0.0,
         INIT_SIGMA,
@@ -360,8 +344,13 @@ def main():
         spawn_default_world()
         time.sleep(2.0)
 
-        print("\nSpread + role-input settings:")
+        print("\nSpread + role-input + team-capture fitness settings:")
         print(f"  N_WEIGHTS={N_WEIGHTS}")
+        print(f"  POP_SIZE={POP_SIZE}")
+        print(f"  ELITES={ELITES}")
+        print(f"  GENERATIONS={GENERATIONS}")
+        print(f"  MUTATION_SIGMA={MUTATION_SIGMA}")
+        print(f"  EVALS_PER_CANDIDATE={EVALS_PER_CANDIDATE}")
         print(f"  SPREAD_START_DELAY={SPREAD_START_DELAY}")
         print(f"  SPREAD_DURATION={SPREAD_DURATION}")
         print(f"  SPREAD_TURN_DURATION={SPREAD_TURN_DURATION}")
@@ -428,14 +417,8 @@ def main():
                 f"best_so_far={best_fitness:.4f}"
             )
 
-            # =====================
-            # GA selection + elitism
-            # =====================
-
-            # Sort candidates from best to worst
             sorted_idx = np.argsort(generation_fitnesses)[::-1]
 
-            # Keep best genomes unchanged
             elites = population[sorted_idx[:ELITES]].copy()
 
             new_population = []
@@ -443,7 +426,6 @@ def main():
             for elite in elites:
                 new_population.append(elite.copy())
 
-            # Create children until population is full
             while len(new_population) < POP_SIZE:
                 parent_ids = np.random.choice(ELITES, size=2, replace=True)
 

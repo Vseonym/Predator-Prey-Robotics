@@ -47,11 +47,11 @@ class NNController(Node):
             self.declare_parameter('spread_duration', 15.0).value
         )
         self.spread_turn_duration = float(
-            self.declare_parameter('spread_turn_duration', 0.8).value
+            self.declare_parameter('spread_turn_duration', 1.2).value
         )
 
         self.spread_edge_linear = float(
-            self.declare_parameter('spread_edge_linear', 0.055).value
+            self.declare_parameter('spread_edge_linear', 0.08).value
         )
         self.spread_mid_linear = float(
             self.declare_parameter('spread_mid_linear', 0.045).value
@@ -61,7 +61,7 @@ class NNController(Node):
         )
 
         self.spread_turn_angular = float(
-            self.declare_parameter('spread_turn_angular', 0.45).value
+            self.declare_parameter('spread_turn_angular', 0.75).value
         )
 
         # Set to -1.0 if left/right is reversed in Gazebo.
@@ -242,8 +242,8 @@ class NNController(Node):
         """
         Forward speed roles.
 
-        Edges are faster than middle robots.
-        Center is slowest so it stays closer to the center line.
+        Edges are fastest, so they can get over / around the prey.
+        Center is slower so it does not immediately bunch with the edge robots.
         """
 
         role_linear = {

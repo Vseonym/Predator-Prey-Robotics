@@ -231,7 +231,10 @@ class CameraFitnessEvaluator(Node):
           - red teammate camera features
 
         Goal:
-          Reward multi-predator pressure, but punish bunching.
+          Encourage real team capture:
+            - multiple predators pressuring prey at the same time
+            - predators approaching from different visual directions
+            - predators not bunching/colliding with each other
         """
 
         states = list(self.latest_sensor_state.values())
@@ -271,6 +274,28 @@ class CameraFitnessEvaluator(Node):
             )
         ]
 
+        # Softer team-capture pressure.
+        # This is intentionally easier than the individual capture condition.
+        # It rewards several predators being close to the prey at the same time,
+        # not only one robot making perfect contact.
+        team_capture_pressure = [
+            s for s in states
+            if (
+                s["prey_visible"] > 0.0
+                and s["prey_area"] > 0.10
+                and abs(s["prey_x"]) < 0.70
+                and s["front_close"] > 0.40
+            )
+        ]
+
+        team_capture_reward = 0.0
+
+        if len(team_capture_pressure) >= 2:
+            team_capture_reward = 1.0
+
+        if len(team_capture_pressure) >= 3:
+            team_capture_reward = 2.0
+
         team_visibility_reward = min(1.0, len(visible) / max(1, n_robots))
         team_close_reward = min(1.0, len(close_camera) / 3.0)
         team_very_close_reward = min(1.0, len(very_close_camera) / 2.0)
@@ -307,18 +332,30 @@ class CameraFitnessEvaluator(Node):
         visual_spread_reward = max(0.0, (view_bins - 1) / 2.0)
 
         # Penalize if 2+ predators see prey but all from the same image region.
+        # This discourages all robots chasing from the same direction.
         same_view_penalty = 0.0
         if len(visible) >= 2 and view_bins <= 1:
             same_view_penalty = 1.0
 
-        # Penalize teammate crowding using red robot features.
+        # General teammate crowding using red robot features.
+        # This is mild: seeing a teammate is not always bad during a surround.
         red_crowding_values = []
+
+        # Stronger collision-like penalty:
+        # another predator is large and centered in the camera.
+        teammate_collision_like_count = 0
 
         for s in states:
             if s["red_visible"] > 0.0:
                 red_centering = max(0.0, 1.0 - abs(s["red_x"]))
                 red_crowding = (s["red_area"] ** 0.5) * red_centering
                 red_crowding_values.append(red_crowding)
+
+                if (
+                    s["red_area"] > 0.12
+                    and abs(s["red_x"]) < 0.65
+                ):
+                    teammate_collision_like_count += 1
 
         if red_crowding_values:
             teammate_crowding_penalty = min(
@@ -328,17 +365,24 @@ class CameraFitnessEvaluator(Node):
         else:
             teammate_crowding_penalty = 0.0
 
+        teammate_collision_penalty = min(
+            1.0,
+            teammate_collision_like_count / 2.0,
+        )
+
         # Do not give team reward if only one predator is involved.
         multi_robot_bonus = 1.0 if len(visible) >= 2 else 0.0
 
         team_reward = (
-            0.15 * team_visibility_reward
-            + 0.30 * team_close_reward
-            + 0.30 * team_very_close_reward
-            + 0.45 * pressure_reward
-            + 0.60 * visual_spread_reward
-            - 0.50 * same_view_penalty
-            - 0.70 * teammate_crowding_penalty
+            0.10 * team_visibility_reward
+            + 0.25 * team_close_reward
+            + 0.25 * team_very_close_reward
+            + 0.40 * pressure_reward
+            + 0.65 * visual_spread_reward
+            + 1.50 * team_capture_reward
+            - 0.35 * same_view_penalty
+            - 0.45 * teammate_crowding_penalty
+            - 0.80 * teammate_collision_penalty
         )
 
         team_reward *= multi_robot_bonus
@@ -556,9 +600,9 @@ class CameraFitnessEvaluator(Node):
                 + 0.05 * center_reward
                 + 3.00 * progress_reward
                 + 1.50 * close_reward
-                + 6.00 * capture_reward
+                + 5.00 * capture_reward
                 - 0.50 * obstacle_penalty
-                - 0.25 * red_penalty
+                - 0.20 * red_penalty
                 - 0.20 * staring_penalty
                 - 0.10 * lost_sight_penalty
             )
@@ -581,7 +625,7 @@ class CameraFitnessEvaluator(Node):
             reward = (
                 -0.03
                 - 0.50 * obstacle_penalty
-                - 0.25 * red_penalty
+                - 0.20 * red_penalty
                 - 0.10 * lost_sight_penalty
             )
 
@@ -751,3 +795,8 @@ class CameraFitnessEvaluator(Node):
         print("  prey_area > 0.20")
         print("  abs(prey_x) < 0.50")
         print("  max(center, center_left, center_right, left, right) > 0.75")
+        print("\nTeam capture pressure also rewarded when 2+ predators satisfy:")
+        print("  prey_visible > 0")
+        print("  prey_area > 0.10")
+        print("  abs(prey_x) < 0.70")
+        print("  front_close > 0.40")
