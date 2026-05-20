@@ -29,7 +29,7 @@ processes = []
 # =========================
 
 POP_SIZE = 12
-ELITES = 2
+ELITES = 4
 GENERATIONS = 35
 
 INIT_SIGMA = 0.20
@@ -41,7 +41,7 @@ EVALS_PER_CANDIDATE = 1
 # Episode duration includes the scripted setup/warmup phase.
 # With 15s spread and 2s start delay, fitness starts after ~16s,
 # so 45s gives the NN around 29 seconds of scored behaviour.
-EPISODE_DURATION = 40.0
+EPISODE_DURATION = 35.0
 
 
 # =========================
@@ -66,14 +66,14 @@ EPISODE_DURATION = 40.0
 #
 SPREAD_START_DELAY = 2.0
 SPREAD_DURATION = 15.0
-SPREAD_TURN_DURATION = 1.2
+SPREAD_TURN_DURATION = 0.0
 
 # Edges move faster than center to get over / around the prey.
 SPREAD_EDGE_LINEAR = 0.08
 SPREAD_MID_LINEAR = 0.045
 SPREAD_CENTER_LINEAR = 0.035
 
-SPREAD_TURN_ANGULAR = 0.75
+SPREAD_TURN_ANGULAR = 0.0
 
 # If left/right is reversed in Gazebo, change this to -1.0.
 SPREAD_ANGULAR_SCALE = 1.0

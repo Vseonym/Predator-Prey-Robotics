@@ -597,7 +597,6 @@ class CameraFitnessEvaluator(Node):
             reward = (
                 0.02 * visibility_reward
                 + 0.80 * area_reward
-                + 0.05 * center_reward
                 + 3.00 * progress_reward
                 + 1.50 * close_reward
                 + 5.00 * capture_reward
