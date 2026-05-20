@@ -544,6 +544,11 @@ class CameraFitnessEvaluator(Node):
 
         front_close = self.get_front_close(robot_name)
 
+        # Tiny hard-contact penalty.
+        # This only activates on extreme proximity/contact and is intentionally small
+        # so it discourages hard ramming without destroying the learned capture behavior.
+        hard_contact_penalty = 1.0 if front_close > 0.95 else 0.0
+
         self.update_latest_sensor_state(
             robot_name=robot_name,
             prey_visible=prey_visible,
@@ -603,6 +608,7 @@ class CameraFitnessEvaluator(Node):
                 - 0.50 * obstacle_penalty
                 - 0.20 * red_penalty
                 - 0.20 * staring_penalty
+                - 0.15 * hard_contact_penalty
                 - 0.10 * lost_sight_penalty
             )
 
@@ -625,6 +631,7 @@ class CameraFitnessEvaluator(Node):
                 -0.03
                 - 0.50 * obstacle_penalty
                 - 0.20 * red_penalty
+                - 0.15 * hard_contact_penalty
                 - 0.10 * lost_sight_penalty
             )
 
@@ -799,3 +806,5 @@ class CameraFitnessEvaluator(Node):
         print("  prey_area > 0.10")
         print("  abs(prey_x) < 0.70")
         print("  front_close > 0.40")
+        print("\nTiny hard-contact penalty:")
+        print("  -0.15 if front_close > 0.95")
