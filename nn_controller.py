@@ -19,27 +19,15 @@ class NNController(Node):
         self.robot_name = self.declare_parameter('robot_name', 'predator_0').value
         self.policy_path = self.declare_parameter('policy_path', 'current_policy.npy').value
 
+        # Number of predators in the team.
+        # This keeps role encoding and scripted spread reusable for 4 or 5 predators.
+        self.predator_count = int(
+            self.declare_parameter('predator_count', 4).value
+        )
+
         # =========================
         # Scripted spread settings
         # =========================
-        #
-        # Total scripted behaviour:
-        #
-        #   0 -> spread_start_delay:
-        #       publish stop so Gazebo/ROS can connect cmd_vel.
-        #
-        #   spread_start_delay -> spread_start_delay + spread_turn_duration:
-        #       rotate in place once according to robot role.
-        #
-        #   after rotation -> spread_start_delay + spread_duration:
-        #       drive straight according to robot role.
-        #
-        #   after spread_start_delay + spread_duration:
-        #       switch to NN policy.
-        #
-        # The NN also receives robot_role_value as input, so after the
-        # scripted spread it can learn role-specific behaviour.
-        #
         self.spread_start_delay = float(
             self.declare_parameter('spread_start_delay', 2.0).value
         )
@@ -47,7 +35,7 @@ class NNController(Node):
             self.declare_parameter('spread_duration', 15.0).value
         )
         self.spread_turn_duration = float(
-            self.declare_parameter('spread_turn_duration', 1.2).value
+            self.declare_parameter('spread_turn_duration', 0.0).value
         )
 
         self.spread_edge_linear = float(
@@ -61,7 +49,7 @@ class NNController(Node):
         )
 
         self.spread_turn_angular = float(
-            self.declare_parameter('spread_turn_angular', 0.75).value
+            self.declare_parameter('spread_turn_angular', 0.0).value
         )
 
         # Set to -1.0 if left/right is reversed in Gazebo.
@@ -178,23 +166,40 @@ class NNController(Node):
     def clamp(self, value, low, high):
         return max(low, min(high, value))
 
+    def get_robot_index(self):
+        try:
+            return int(self.robot_name.split("_")[-1])
+        except ValueError:
+            return 0
+
     def get_robot_role_value(self):
         """
         Normalized role input for the NN.
 
+        For predator_count=4:
+            predator_0 = -1.0
+            predator_1 ~= -0.33
+            predator_2 ~=  0.33
+            predator_3 =  1.0
+
+        For predator_count=5:
+            predator_0 = -1.0
+            predator_1 = -0.5
+            predator_2 =  0.0
+            predator_3 =  0.5
+            predator_4 =  1.0
+
         This is not a hardcoded action. It only tells the shared policy
-        which predator it controls.
+        which relative role it controls.
         """
 
-        role_values = {
-            "predator_0": -1.0,
-            "predator_1": -0.5,
-            "predator_2": 0.0,
-            "predator_3": 0.5,
-            "predator_4": 1.0,
-        }
+        if self.predator_count <= 1:
+            return 0.0
 
-        return role_values.get(self.robot_name, 0.0)
+        robot_index = self.get_robot_index()
+        robot_index = self.clamp(robot_index, 0, self.predator_count - 1)
+
+        return -1.0 + (2.0 * robot_index / (self.predator_count - 1))
 
     def get_inputs(self):
         if self.camera_features is None:
@@ -223,38 +228,34 @@ class NNController(Node):
         """
         Turn roles for initial half-circle/fan formation.
 
-        Positive angular.z = left turn in ROS convention.
-        If left/right is reversed in your Gazebo view, set
-        spread_angular_scale to -1.0 in run_simulation.py.
+        With role_value:
+            left edge  = -1.0 -> positive angular.z
+            right edge =  1.0 -> negative angular.z
+
+        If left/right is reversed in Gazebo, set spread_angular_scale to -1.0.
         """
 
-        role_turns = {
-            "predator_0": 0.50,
-            "predator_1": 0.25,
-            "predator_2": 0.00,
-            "predator_3": -0.25,
-            "predator_4": -0.50,
-        }
-
-        return role_turns.get(self.robot_name, 0.0)
+        role_value = self.get_robot_role_value()
+        return -0.50 * role_value
 
     def get_spread_linear_role(self):
         """
         Forward speed roles.
 
-        Edges are fastest, so they can get over / around the prey.
-        Center is slower so it does not immediately bunch with the edge robots.
+        Edge predators are fastest.
+        Middle predators are slower.
+        If there is a true center predator, it is slowest.
         """
 
-        role_linear = {
-            "predator_0": self.spread_edge_linear,
-            "predator_1": self.spread_mid_linear,
-            "predator_2": self.spread_center_linear,
-            "predator_3": self.spread_mid_linear,
-            "predator_4": self.spread_edge_linear,
-        }
+        role_abs = abs(self.get_robot_role_value())
 
-        return role_linear.get(self.robot_name, self.spread_center_linear)
+        if role_abs >= 0.90:
+            return self.spread_edge_linear
+
+        if role_abs <= 0.10:
+            return self.spread_center_linear
+
+        return self.spread_mid_linear
 
     def get_scripted_spread_command(self):
         """
@@ -264,7 +265,7 @@ class NNController(Node):
             stop/wait so cmd_vel connection is ready
 
         Phase 1:
-            rotate in place once
+            rotate in place once, if spread_turn_duration > 0
 
         Phase 2:
             drive straight with role-based speed

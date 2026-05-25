@@ -17,59 +17,40 @@ processes = []
 # Evaluation settings
 # =========================
 
+PREDATOR_COUNT = 4
 POLICY_PATH = "best_policy.npy"
 NUM_EPISODES = 5
 
-# Keep this aligned with run_simulation.py.
-# This duration is the time passed into fitness.evaluate().
-# It includes the warmup part that fitness ignores.
-EPISODE_DURATION = 35.0
+# Keep aligned with run_simulation.py.
+EPISODE_DURATION = 50.0
 
 
 # =========================
 # Scripted spread settings
 # =========================
-#
-# Passed to nn_controller.py.
-#
-# Timeline from predator controller start:
-#
-#   0 -> SPREAD_START_DELAY:
-#       stop/wait so cmd_vel connections are ready
-#
-#   SPREAD_START_DELAY -> SPREAD_START_DELAY + SPREAD_TURN_DURATION:
-#       rotate in place once
-#
-#   after turn -> SPREAD_START_DELAY + SPREAD_DURATION:
-#       drive straight with role-based speed
-#
-#   after SPREAD_START_DELAY + SPREAD_DURATION:
-#       switch to NN
-#
+
 SPREAD_START_DELAY = 2.0
 SPREAD_DURATION = 15.0
 SPREAD_TURN_DURATION = 0.0
 
-# Edges move faster than center to get over / around the prey.
 SPREAD_EDGE_LINEAR = 0.08
 SPREAD_MID_LINEAR = 0.045
 SPREAD_CENTER_LINEAR = 0.035
 
 SPREAD_TURN_ANGULAR = 0.0
-
-# If left/right is reversed in Gazebo, change this to -1.0.
 SPREAD_ANGULAR_SCALE = 1.0
 
-# Prey waits briefly so it does not escape while predator cmd_vel topics connect.
 PREY_START_DELAY = SPREAD_START_DELAY
-
-# Time between starting controllers and starting fitness evaluation.
 CONTROLLER_STARTUP_DELAY = 1.0
 
 FITNESS_WARMUP = max(
     0.0,
     SPREAD_START_DELAY + SPREAD_DURATION - CONTROLLER_STARTUP_DELAY,
 )
+
+
+def predator_names():
+    return [f"predator_{i}" for i in range(PREDATOR_COUNT)]
 
 
 def start_controller(name, policy_path=POLICY_PATH):
@@ -82,6 +63,8 @@ def start_controller(name, policy_path=POLICY_PATH):
             f"robot_name:={name}",
             "-p",
             f"policy_path:={policy_path}",
+            "-p",
+            f"predator_count:={PREDATOR_COUNT}",
             "-p",
             f"spread_start_delay:={SPREAD_START_DELAY}",
             "-p",
@@ -104,8 +87,8 @@ def start_controller(name, policy_path=POLICY_PATH):
 
 
 def start_all_predator_controllers(policy_path=POLICY_PATH):
-    for i in range(5):
-        start_controller(f"predator_{i}", policy_path)
+    for name in predator_names():
+        start_controller(name, policy_path)
 
 
 def start_prey_controller():
@@ -172,7 +155,7 @@ def stop_robots():
     Send zero cmd_vel to all predators and prey.
     Useful because Gazebo may keep the last velocity command briefly.
     """
-    robot_names = [f"predator_{i}" for i in range(5)] + ["prey_0"]
+    robot_names = predator_names() + ["prey_0"]
 
     for robot_name in robot_names:
         topic = f"/{robot_name}/cmd_vel"
@@ -195,7 +178,7 @@ def stop_robots():
 def evaluate_once(episode_id, policy_path=POLICY_PATH):
     print(f"\n=== Evaluation episode {episode_id} ===")
 
-    robot_names = [f"predator_{i}" for i in range(5)]
+    robot_names = predator_names()
 
     stop_all()
     stop_robots()
@@ -210,7 +193,6 @@ def evaluate_once(episode_id, policy_path=POLICY_PATH):
         start_all_predator_controllers(policy_path=policy_path)
         start_prey_controller()
 
-        # Same startup delay as run_simulation.py.
         time.sleep(CONTROLLER_STARTUP_DELAY)
 
         fitness = fitness_node.evaluate(
@@ -238,6 +220,7 @@ def main():
         print(f"Using policy: {POLICY_PATH}")
 
         print("\nEvaluation settings:")
+        print(f"  PREDATOR_COUNT={PREDATOR_COUNT}")
         print(f"  NUM_EPISODES={NUM_EPISODES}")
         print(f"  EPISODE_DURATION={EPISODE_DURATION}")
         print(f"  SPREAD_START_DELAY={SPREAD_START_DELAY}")
@@ -257,7 +240,7 @@ def main():
         time.sleep(1.0)
 
         print("Spawning predators and prey...")
-        spawn_default_world()
+        spawn_default_world(predator_count=PREDATOR_COUNT)
         time.sleep(2.0)
 
         fitnesses = []

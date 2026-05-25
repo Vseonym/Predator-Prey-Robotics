@@ -25,6 +25,13 @@ processes = []
 
 
 # =========================
+# Predator setup
+# =========================
+
+PREDATOR_COUNT = 4
+
+
+# =========================
 # Genetic Algorithm settings
 # =========================
 
@@ -36,11 +43,11 @@ INIT_SIGMA = 0.20
 MUTATION_SIGMA = 0.12
 
 # 1 is faster. Use 2 for a more reliable final run.
-EVALS_PER_CANDIDATE = 1
+EVALS_PER_CANDIDATE = 2
 
 # Episode duration includes the scripted setup/warmup phase.
 # With 15s spread and 2s start delay, fitness starts after ~16s,
-# so 45s gives the NN around 29 seconds of scored behaviour.
+# so 35s gives the NN around 19 seconds of scored behaviour.
 EPISODE_DURATION = 35.0
 
 
@@ -91,6 +98,10 @@ FITNESS_WARMUP = max(
 )
 
 
+def predator_names():
+    return [f"predator_{i}" for i in range(PREDATOR_COUNT)]
+
+
 def start_controller(name):
     p = subprocess.Popen(
         [
@@ -99,6 +110,8 @@ def start_controller(name):
             "--ros-args",
             "-p",
             f"robot_name:={name}",
+            "-p",
+            f"predator_count:={PREDATOR_COUNT}",
             "-p",
             f"spread_start_delay:={SPREAD_START_DELAY}",
             "-p",
@@ -148,8 +161,8 @@ def start_prey_controller():
 
 
 def start_all_predator_controllers():
-    for i in range(5):
-        start_controller(f"predator_{i}")
+    for name in predator_names():
+        start_controller(name)
 
 
 def stop_all():
@@ -185,7 +198,7 @@ def save_policy(genome):
 def run_episode(genome, episode_id):
     print(f"\n=== Episode {episode_id} ===")
 
-    robot_names = [f"predator_{i}" for i in range(5)]
+    robot_names = predator_names()
 
     stop_all()
     time.sleep(0.5)
@@ -341,10 +354,11 @@ def main():
         clear_simulation()
         time.sleep(1.0)
 
-        spawn_default_world()
+        spawn_default_world(predator_count=PREDATOR_COUNT)
         time.sleep(2.0)
 
-        print("\nSpread + role-input + team-capture fitness settings:")
+        print("\n4-predator role-input + team-capture fitness settings:")
+        print(f"  PREDATOR_COUNT={PREDATOR_COUNT}")
         print(f"  N_WEIGHTS={N_WEIGHTS}")
         print(f"  POP_SIZE={POP_SIZE}")
         print(f"  ELITES={ELITES}")
