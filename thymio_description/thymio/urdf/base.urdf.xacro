@@ -31,7 +31,7 @@
   </xacro:if>
 
   <xacro:macro name="thymio">
-      <link name="${tf_prefix}camera_link">
+      <link name="${tf_prefix}camera_front_link">
       <inertial>
         <origin xyz="0 0 0"/>
         <mass value="0.01"/>
@@ -39,20 +39,99 @@
       </inertial>
       <visual>
         <geometry>
-          <box size="0.01 0.01 0.01"/>
+          <box size="0.015 0.015 0.015"/>
         </geometry>
       </visual>
       <collision>
         <geometry>
-          <box size="0.01 0.01 0.01"/>
+          <box size="0.001 0.001 0.001"/>
         </geometry>
       </collision>
     </link>
 
     <joint name="${tf_prefix}camera_joint" type="fixed">
       <parent link="${tf_prefix}base_link"/>
-      <child link="${tf_prefix}camera_link"/>
-      <origin xyz="0.075 0 0.045" rpy="0 0 0"/>
+      <child link="${tf_prefix}camera_front_link"/>
+      <origin xyz="0.025 0.000 0.100" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Cameras for simulated 360-degree perception.
+         All four cameras are mounted above the robot at the same height.
+         The front camera keeps its existing topic for FPV compatibility.
+         Privileged controllers ignore all cameras.
+         FPV controllers use only the front camera.
+         360 controllers use front + left + right + rear cameras. -->
+
+    <link name="${tf_prefix}camera_left_link">
+      <inertial>
+        <origin xyz="0 0 0"/>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <box size="0.015 0.015 0.015"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${tf_prefix}camera_left_joint" type="fixed">
+      <parent link="${tf_prefix}base_link"/>
+      <child link="${tf_prefix}camera_left_link"/>
+      <origin xyz="0.025 0.000 0.100" rpy="0 0 1.5708"/>
+    </joint>
+
+    <link name="${tf_prefix}camera_right_link">
+      <inertial>
+        <origin xyz="0 0 0"/>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <box size="0.015 0.015 0.015"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${tf_prefix}camera_right_joint" type="fixed">
+      <parent link="${tf_prefix}base_link"/>
+      <child link="${tf_prefix}camera_right_link"/>
+      <origin xyz="0.025 0.000 0.100" rpy="0 0 -1.5708"/>
+    </joint>
+
+    <link name="${tf_prefix}camera_rear_link">
+      <inertial>
+        <origin xyz="0 0 0"/>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <box size="0.015 0.015 0.015"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${tf_prefix}camera_rear_joint" type="fixed">
+      <parent link="${tf_prefix}base_link"/>
+      <child link="${tf_prefix}camera_rear_link"/>
+      <origin xyz="0.025 0.000 0.100" rpy="0 0 3.14159"/>
     </joint>
 
     <link name="${tf_prefix}base_link">
@@ -123,13 +202,13 @@
       <origin xyz="0 0 0.035"/>
     </joint>
 
-    <gazebo reference="${tf_prefix}camera_link">
-      <sensor type="camera" name="camera_sensor">
+    <gazebo reference="${tf_prefix}camera_front_link">
+      <sensor type="camera" name="camera_front_sensor">
         <always_on>true</always_on>
         <update_rate>$(arg odom_rate)</update_rate>
-        <visualize>false</visualize>
+        <visualize>true</visualize>
         <camera>
-          <horizontal_fov>1.047</horizontal_fov>
+          <horizontal_fov>1.5708</horizontal_fov>
           <image>
             <width>320</width>
             <height>240</height>
@@ -141,11 +220,95 @@
           </clip>
         </camera>
         <plugin name="${_name}_camera_controller" filename="libgazebo_ros_camera.so">
-          <frame_name>${tf_prefix}camera_link</frame_name>
+          <frame_name>${tf_prefix}camera_front_link</frame_name>
           <ros>
             <namespace>${_name}</namespace>
             <remapping>image_raw:=camera/image_raw</remapping>
             <remapping>camera_info:=camera/camera_info</remapping>
+          </ros>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <gazebo reference="${tf_prefix}camera_left_link">
+      <sensor type="camera" name="camera_left_sensor">
+        <always_on>true</always_on>
+        <update_rate>$(arg odom_rate)</update_rate>
+        <visualize>true</visualize>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>320</width>
+            <height>240</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <plugin name="${_name}_camera_left_controller" filename="libgazebo_ros_camera.so">
+          <frame_name>${tf_prefix}camera_left_link</frame_name>
+          <ros>
+            <namespace>${_name}</namespace>
+            <remapping>image_raw:=camera_left/image_raw</remapping>
+            <remapping>camera_info:=camera_left/camera_info</remapping>
+          </ros>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <gazebo reference="${tf_prefix}camera_right_link">
+      <sensor type="camera" name="camera_right_sensor">
+        <always_on>true</always_on>
+        <update_rate>$(arg odom_rate)</update_rate>
+        <visualize>true</visualize>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>320</width>
+            <height>240</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <plugin name="${_name}_camera_right_controller" filename="libgazebo_ros_camera.so">
+          <frame_name>${tf_prefix}camera_right_link</frame_name>
+          <ros>
+            <namespace>${_name}</namespace>
+            <remapping>image_raw:=camera_right/image_raw</remapping>
+            <remapping>camera_info:=camera_right/camera_info</remapping>
+          </ros>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <gazebo reference="${tf_prefix}camera_rear_link">
+      <sensor type="camera" name="camera_rear_sensor">
+        <always_on>true</always_on>
+        <update_rate>$(arg odom_rate)</update_rate>
+        <visualize>true</visualize>
+        <camera>
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>320</width>
+            <height>240</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <plugin name="${_name}_camera_rear_controller" filename="libgazebo_ros_camera.so">
+          <frame_name>${tf_prefix}camera_rear_link</frame_name>
+          <ros>
+            <namespace>${_name}</namespace>
+            <remapping>image_raw:=camera_rear/image_raw</remapping>
+            <remapping>camera_info:=camera_rear/camera_info</remapping>
           </ros>
         </plugin>
       </sensor>
