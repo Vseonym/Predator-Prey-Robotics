@@ -35,12 +35,5 @@ training:
   episode_duration: 35.0
   sample_dt: 0.2
 
-spread:
-  start_delay: 2.0
-  duration: 15.0
-  turn_duration: 0.0
-  edge_linear: 0.08
-  mid_linear: 0.045
-  center_linear: 0.035
-  turn_angular: 0.0
-  angular_scale: 1.0
+startup:
+  controller_delay: 2.0

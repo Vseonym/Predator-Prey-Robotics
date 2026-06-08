@@ -21,14 +21,9 @@ class NNController(Node):
         self.policy_module_name = self.declare_parameter("policy_module", "policies.policy_fpv").value
         self.model_states_topic = self.declare_parameter("model_states_topic", "/model_states").value
 
-        self.spread_start_delay = float(self.declare_parameter("spread_start_delay", 2.0).value)
-        self.spread_duration = float(self.declare_parameter("spread_duration", 15.0).value)
-        self.spread_turn_duration = float(self.declare_parameter("spread_turn_duration", 0.0).value)
-        self.spread_edge_linear = float(self.declare_parameter("spread_edge_linear", 0.08).value)
-        self.spread_mid_linear = float(self.declare_parameter("spread_mid_linear", 0.045).value)
-        self.spread_center_linear = float(self.declare_parameter("spread_center_linear", 0.035).value)
-        self.spread_turn_angular = float(self.declare_parameter("spread_turn_angular", 0.0).value)
-        self.spread_angular_scale = float(self.declare_parameter("spread_angular_scale", 1.0).value)
+        # Only used to let all controller processes, subscriptions and publishers start.
+        # No scripted spreading/movement is performed anymore.
+        self.startup_delay = float(self.declare_parameter("startup_delay", 2.0).value)
 
         self.wheel_radius = 0.022
         self.wheel_separation = 0.0935
@@ -54,7 +49,8 @@ class NNController(Node):
 
         self.get_logger().info(
             f"Started {self.robot_name}: observation={self.observation_type}, "
-            f"policy={self.policy_module_name}, weights={self.policy.N_WEIGHTS}"
+            f"policy={self.policy_module_name}, weights={self.policy.N_WEIGHTS}, "
+            f"startup_delay={self.startup_delay}"
         )
 
     def now_seconds(self):
@@ -75,41 +71,6 @@ class NNController(Node):
 
     def clamp(self, value, low, high):
         return max(low, min(high, value))
-
-    def get_robot_index(self):
-        try:
-            return int(self.robot_name.split("_")[-1])
-        except ValueError:
-            return 0
-
-    def get_robot_role_value(self):
-        if self.predator_count <= 1:
-            return 0.0
-        robot_index = self.clamp(self.get_robot_index(), 0, self.predator_count - 1)
-        return -1.0 + (2.0 * robot_index / (self.predator_count - 1))
-
-    def get_spread_turn_role(self):
-        return -0.50 * self.get_robot_role_value()
-
-    def get_spread_linear_role(self):
-        role_abs = abs(self.get_robot_role_value())
-        if role_abs >= 0.90:
-            return self.spread_edge_linear
-        if role_abs <= 0.10:
-            return self.spread_center_linear
-        return self.spread_mid_linear
-
-    def get_scripted_spread_command(self):
-        elapsed = self.now_seconds() - self.start_time
-        if elapsed < self.spread_start_delay:
-            return 0.0, 0.0
-
-        spread_elapsed = elapsed - self.spread_start_delay
-        if spread_elapsed < self.spread_turn_duration:
-            angular_z = self.get_spread_turn_role() * self.spread_turn_angular * self.spread_angular_scale
-            return 0.0, angular_z
-
-        return self.get_spread_linear_role(), 0.0
 
     def publish_stop(self):
         self.cmd_pub.publish(Twist())
@@ -133,19 +94,13 @@ class NNController(Node):
         self.cmd_pub.publish(cmd)
 
     def control_loop(self):
-        elapsed = self.now_seconds() - self.start_time
-        scripted_total_duration = self.spread_start_delay + self.spread_duration
-
-        if elapsed < scripted_total_duration:
-            linear_x, angular_z = self.get_scripted_spread_command()
-            cmd = Twist()
-            cmd.linear.x = self.clamp(linear_x, 0.0, self.max_linear)
-            cmd.angular.z = self.clamp(angular_z, -self.max_angular, self.max_angular)
-            self.cmd_pub.publish(cmd)
+        if self.now_seconds() - self.start_time < self.startup_delay:
+            self.publish_stop()
             return
 
         features = self.observation.get_features()
         if features is None:
+            self.publish_stop()
             return
 
         omega_left, omega_right = self.policy.nn_forward(features, self.genome, self.max_wheel_omega)

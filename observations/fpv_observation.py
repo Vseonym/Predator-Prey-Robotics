@@ -1,64 +1,69 @@
 import math
 import numpy as np
 from cv_bridge import CvBridge
-from sensor_msgs.msg import Image, LaserScan
+from sensor_msgs.msg import Image
+
 from vision import extract_features
 
 
 class FPVObservation:
+    """
+    Front-camera observation compressed into the same conceptual 3 inputs
+    as the privileged paper controller:
+
+    [r_like, delta_theta_like, d_like]
+
+    r_like:
+        signed visual closeness of the nearest/strongest red teammate blob.
+        Positive means teammate is visually on the left, negative on the right.
+    delta_theta_like:
+        estimated prey bearing from the front camera, normalized to [-1, 1].
+        0 when prey is not visible.
+    d_like:
+        visual prey closeness proxy, sqrt(green_blob_area). 0 when not visible.
+    """
+
     def __init__(self, node, robot_name, predator_count):
         self.node = node
         self.robot_name = robot_name
         self.predator_count = predator_count
         self.bridge = CvBridge()
         self.camera_features = None
-        self.prox_names = ["center", "center_left", "center_right", "left", "right"]
-        self.prox_values = {name: 0.0 for name in self.prox_names}
 
-        node.create_subscription(Image, f"/{robot_name}/camera/image_raw", self.image_callback, 10)
-        for prox_name in self.prox_names:
-            node.create_subscription(
-                LaserScan,
-                f"/{robot_name}/proximity/{prox_name}",
-                lambda msg, prox=prox_name: self.proximity_callback(msg, prox),
-                10,
-            )
+        node.create_subscription(
+            Image,
+            f"/{robot_name}/camera/image_raw",
+            self.image_callback,
+            10,
+        )
 
     def image_callback(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         self.camera_features = extract_features(frame)
 
-    def proximity_callback(self, msg, prox_name):
-        if msg.range_max <= msg.range_min:
-            self.prox_values[prox_name] = 0.0
-            return
-        valid = [r for r in msg.ranges if not math.isnan(r) and not math.isinf(r) and msg.range_min <= r <= msg.range_max]
-        if not valid:
-            self.prox_values[prox_name] = 0.0
-            return
-        closest = min(valid)
-        closeness = 1.0 - ((closest - msg.range_min) / (msg.range_max - msg.range_min))
-        self.prox_values[prox_name] = max(0.0, min(1.0, closeness))
-
-    def role_value(self):
-        if self.predator_count <= 1:
-            return 0.0
-        try:
-            idx = int(self.robot_name.split("_")[-1])
-        except ValueError:
-            idx = 0
-        idx = max(0, min(self.predator_count - 1, idx))
-        return -1.0 + (2.0 * idx / (self.predator_count - 1))
+    @staticmethod
+    def _sqrt_area(area):
+        return math.sqrt(max(0.0, float(area)))
 
     def get_features(self):
         if self.camera_features is None:
             return None
-        return np.array([
-            *self.camera_features,
-            self.prox_values["center"],
-            self.prox_values["center_left"],
-            self.prox_values["center_right"],
-            self.prox_values["left"],
-            self.prox_values["right"],
-            self.role_value(),
-        ], dtype=np.float32)
+
+        prey_visible, prey_x, prey_area, red_visible, red_x, red_area = self.camera_features
+
+        if red_visible > 0.0:
+            # extract_features: x < 0 means blob is left in image.
+            # Privileged signed r uses positive for left, so invert image x.
+            r_like = -float(red_x) * self._sqrt_area(red_area)
+        else:
+            r_like = 0.0
+
+        if prey_visible > 0.0:
+            # x < 0 means prey is left in image; privileged angle is positive-left.
+            delta_theta_like = -float(prey_x)
+            d_like = self._sqrt_area(prey_area)
+        else:
+            delta_theta_like = 0.0
+            d_like = 0.0
+
+        return np.array([r_like, delta_theta_like, d_like], dtype=np.float32)

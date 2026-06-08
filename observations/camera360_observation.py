@@ -1,11 +1,25 @@
 import math
+import cv2
 import numpy as np
 from cv_bridge import CvBridge
-from sensor_msgs.msg import Image, LaserScan
+from sensor_msgs.msg import Image
+
 from vision import extract_features
 
 
 class Camera360Observation:
+    """
+    Four camera streams are merged into one panorama-like image, then the same
+    vision extractor is applied once. The final controller input is compressed
+    to the same conceptual 3 inputs as the privileged paper controller:
+
+    [r_like, delta_theta_like, d_like]
+
+    The panorama keeps the front camera in the middle so x ~= 0 corresponds to
+    straight ahead. Rear camera is split across the left/right edges to reduce
+    the discontinuity at the back of the robot.
+    """
+
     def __init__(self, node, robot_name, predator_count):
         self.node = node
         self.robot_name = robot_name
@@ -13,11 +27,7 @@ class Camera360Observation:
         self.bridge = CvBridge()
 
         self.camera_names = ["camera", "camera_left", "camera_right", "camera_rear"]
-        self.camera_features = {name: [0.0] * 6 for name in self.camera_names}
-        self.camera_seen = {name: False for name in self.camera_names}
-
-        self.prox_names = ["center", "center_left", "center_right", "left", "right"]
-        self.prox_values = {name: 0.0 for name in self.prox_names}
+        self.frames = {name: None for name in self.camera_names}
 
         for cam in self.camera_names:
             node.create_subscription(
@@ -27,54 +37,62 @@ class Camera360Observation:
                 10,
             )
 
-        for prox_name in self.prox_names:
-            node.create_subscription(
-                LaserScan,
-                f"/{robot_name}/proximity/{prox_name}",
-                lambda msg, prox=prox_name: self.proximity_callback(msg, prox),
-                10,
-            )
-
     def image_callback(self, msg, cam_name):
-        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        self.camera_features[cam_name] = extract_features(frame)
-        self.camera_seen[cam_name] = True
+        self.frames[cam_name] = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
-    def proximity_callback(self, msg, prox_name):
-        if msg.range_max <= msg.range_min:
-            self.prox_values[prox_name] = 0.0
-            return
-        valid = [r for r in msg.ranges if not math.isnan(r) and not math.isinf(r) and msg.range_min <= r <= msg.range_max]
-        if not valid:
-            self.prox_values[prox_name] = 0.0
-            return
-        closest = min(valid)
-        closeness = 1.0 - ((closest - msg.range_min) / (msg.range_max - msg.range_min))
-        self.prox_values[prox_name] = max(0.0, min(1.0, closeness))
+    @staticmethod
+    def _sqrt_area(area):
+        return math.sqrt(max(0.0, float(area)))
 
-    def role_value(self):
-        if self.predator_count <= 1:
-            return 0.0
-        try:
-            idx = int(self.robot_name.split("_")[-1])
-        except ValueError:
-            idx = 0
-        idx = max(0, min(self.predator_count - 1, idx))
-        return -1.0 + (2.0 * idx / (self.predator_count - 1))
+    def build_panorama(self):
+        front = self.frames["camera"]
+        left = self.frames["camera_left"]
+        right = self.frames["camera_right"]
+        rear = self.frames["camera_rear"]
+
+        if front is None:
+            return None
+
+        # Allow the first few frames to arrive gradually. Missing side cameras are black.
+        h, w = front.shape[:2]
+
+        def ensure(frame):
+            if frame is None:
+                return np.zeros_like(front)
+            if frame.shape[:2] != (h, w):
+                return cv2.resize(frame, (w, h))
+            return frame
+
+        left = ensure(left)
+        right = ensure(right)
+        rear = ensure(rear)
+
+        # Split rear camera so the back direction sits at both panorama edges.
+        rear_left_half = rear[:, : w // 2]
+        rear_right_half = rear[:, w // 2 :]
+
+        # Approximate angular order, left-to-right:
+        # rear seam | right | front | left | rear seam
+        # Front camera remains centered in the panorama.
+        return np.hstack([rear_left_half, right, front, left, rear_right_half])
 
     def get_features(self):
-        # Wait until at least front camera has arrived; other cameras can be zeros early.
-        if not self.camera_seen["camera"]:
+        panorama = self.build_panorama()
+        if panorama is None:
             return None
-        features = []
-        for cam in self.camera_names:
-            features.extend(self.camera_features[cam])
-        features.extend([
-            self.prox_values["center"],
-            self.prox_values["center_left"],
-            self.prox_values["center_right"],
-            self.prox_values["left"],
-            self.prox_values["right"],
-            self.role_value(),
-        ])
-        return np.array(features, dtype=np.float32)
+
+        prey_visible, prey_x, prey_area, red_visible, red_x, red_area = extract_features(panorama)
+
+        if red_visible > 0.0:
+            r_like = -float(red_x) * self._sqrt_area(red_area)
+        else:
+            r_like = 0.0
+
+        if prey_visible > 0.0:
+            delta_theta_like = -float(prey_x)
+            d_like = self._sqrt_area(prey_area)
+        else:
+            delta_theta_like = 0.0
+            d_like = 0.0
+
+        return np.array([r_like, delta_theta_like, d_like], dtype=np.float32)

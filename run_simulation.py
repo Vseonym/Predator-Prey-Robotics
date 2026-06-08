@@ -30,6 +30,7 @@ def start_controller(name, cfg, policy_path):
     observation_type = cfg_get(cfg, "observation.type", "fpv")
     policy_module = cfg_get(cfg, "policy.module", "policies.policy_fpv")
     model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
+    startup_delay = cfg_get(cfg, "startup.controller_delay", 2.0)
 
     args = [
         "python3", "nn_controller.py",
@@ -40,14 +41,7 @@ def start_controller(name, cfg, policy_path):
         "-p", f"observation_type:={observation_type}",
         "-p", f"policy_module:={policy_module}",
         "-p", f"model_states_topic:={model_states_topic}",
-        "-p", f"spread_start_delay:={cfg_get(cfg, 'spread.start_delay', 2.0)}",
-        "-p", f"spread_duration:={cfg_get(cfg, 'spread.duration', 15.0)}",
-        "-p", f"spread_turn_duration:={cfg_get(cfg, 'spread.turn_duration', 0.0)}",
-        "-p", f"spread_edge_linear:={cfg_get(cfg, 'spread.edge_linear', 0.08)}",
-        "-p", f"spread_mid_linear:={cfg_get(cfg, 'spread.mid_linear', 0.045)}",
-        "-p", f"spread_center_linear:={cfg_get(cfg, 'spread.center_linear', 0.035)}",
-        "-p", f"spread_turn_angular:={cfg_get(cfg, 'spread.turn_angular', 0.0)}",
-        "-p", f"spread_angular_scale:={cfg_get(cfg, 'spread.angular_scale', 1.0)}",
+        "-p", f"startup_delay:={startup_delay}",
     ]
     p = subprocess.Popen(args)
     processes.append(p)
@@ -56,7 +50,7 @@ def start_controller(name, cfg, policy_path):
 def start_prey_controller(cfg):
     predator_count = int(cfg_get(cfg, "predators.count", 3))
     model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
-    start_delay = cfg_get(cfg, "spread.start_delay", 2.0)
+    start_delay = cfg_get(cfg, "startup.controller_delay", 2.0)
 
     args = [
         "python3", "prey_controller.py",
@@ -109,6 +103,7 @@ def run_episode(genome, episode_id, cfg, policy_path):
     predator_count = int(cfg_get(cfg, "predators.count", 3))
     names = predator_names(predator_count)
     model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
+    controller_startup_delay = float(cfg_get(cfg, "startup.controller_delay", 2.0))
 
     stop_all()
     time.sleep(0.5)
@@ -119,21 +114,19 @@ def run_episode(genome, episode_id, cfg, policy_path):
 
     fitness_node = PaperFitnessEvaluator(names, model_states_topic=model_states_topic)
 
-    controller_startup_delay = 1.0
-    spread_start = float(cfg_get(cfg, "spread.start_delay", 2.0))
-    spread_duration = float(cfg_get(cfg, "spread.duration", 15.0))
-    warmup = max(0.0, spread_start + spread_duration - controller_startup_delay)
-
     try:
         for name in names:
             start_controller(name, cfg, policy_path)
         start_prey_controller(cfg)
+
+        # Give all controller processes/subscriptions/publishers time to start.
+        # Fitness starts after this delay, so no spread warmup is needed.
         time.sleep(controller_startup_delay)
 
         fitness = fitness_node.evaluate(
             duration=float(cfg_get(cfg, "training.episode_duration", 35.0)),
             sample_dt=float(cfg_get(cfg, "training.sample_dt", 0.2)),
-            warmup_duration=warmup,
+            warmup_duration=0.0,
         )
     finally:
         fitness_node.destroy_node()
@@ -159,7 +152,7 @@ def make_child(parent_a, parent_b, n_weights, mutation_sigma):
 
 
 def init_training_log(log_dir):
-    log_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
     csv_path = log_dir / "fitness_history.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -253,7 +246,9 @@ def main():
         print(f"  observation={cfg_get(cfg, 'observation.type')}")
         print(f"  policy={policy_module_name}")
         print(f"  N_WEIGHTS={n_weights}")
-        print(f"  fitness=paper ground-truth fitness for all modes")
+        print(f"  startup_delay={cfg_get(cfg, 'startup.controller_delay', 2.0)}")
+        print("  fitness=paper ground-truth fitness for all modes")
+        print("  scripted_spread=disabled")
 
         for generation in range(generations):
             print(f"\n========== GENERATION {generation} ==========")

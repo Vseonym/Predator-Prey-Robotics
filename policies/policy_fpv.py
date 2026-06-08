@@ -1,8 +1,12 @@
 import numpy as np
 
-# Current FPV policy: one front camera + red teammate features + front proximity + role.
-INPUT_SIZE = 12
-HIDDEN_SIZE = 8
+# Pseudo-privileged FPV controller:
+# inputs: [r_like, delta_theta_like, d_like]
+# hidden: 4
+# outputs: left/right wheel angular velocity
+# N_WEIGHTS = 3*4 + 4 + 4*2 + 2 = 26, same as privileged policy.
+INPUT_SIZE = 3
+HIDDEN_SIZE = 4
 OUTPUT_SIZE = 2
 
 N_WEIGHTS = INPUT_SIZE * HIDDEN_SIZE + HIDDEN_SIZE + HIDDEN_SIZE * OUTPUT_SIZE + OUTPUT_SIZE
