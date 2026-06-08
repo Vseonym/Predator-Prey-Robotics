@@ -1,174 +1,85 @@
-import subprocess
-import signal
-import time
-import os
+import argparse
 import csv
+import importlib
+import os
+import signal
+import subprocess
+import time
 from pathlib import Path
-
-import rclpy
-import numpy as np
-
-from fitness import CameraFitnessEvaluator
-from spawn_robots import clear_simulation, reset_world, spawn_default_world
-from policy import N_WEIGHTS
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import rclpy
 
+from config_utils import load_config, cfg_get
+from fitness import PaperFitnessEvaluator
+from spawn_robots import clear_simulation, reset_world, spawn_default_world
 
-LOG_DIR = Path("training_logs")
-CSV_PATH = LOG_DIR / "fitness_history.csv"
-PLOT_PATH = LOG_DIR / "fitness_curve.png"
 
 processes = []
 
 
-# =========================
-# Predator setup
-# =========================
-
-PREDATOR_COUNT = 4
+def predator_names(predator_count):
+    return [f"predator_{i}" for i in range(predator_count)]
 
 
-# =========================
-# Genetic Algorithm settings
-# =========================
+def start_controller(name, cfg, policy_path):
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    observation_type = cfg_get(cfg, "observation.type", "fpv")
+    policy_module = cfg_get(cfg, "policy.module", "policies.policy_fpv")
+    model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
 
-POP_SIZE = 12
-ELITES = 4
-GENERATIONS = 35
-
-INIT_SIGMA = 0.20
-MUTATION_SIGMA = 0.12
-
-# 1 is faster. Use 2 for a more reliable final run.
-EVALS_PER_CANDIDATE = 2
-
-# Episode duration includes the scripted setup/warmup phase.
-# With 15s spread and 2s start delay, fitness starts after ~16s,
-# so 35s gives the NN around 19 seconds of scored behaviour.
-EPISODE_DURATION = 35.0
-
-
-# =========================
-# Scripted spread settings
-# =========================
-#
-# Passed to nn_controller.py.
-#
-# Timeline from predator controller start:
-#
-#   0 -> SPREAD_START_DELAY:
-#       stop/wait so cmd_vel connections are ready
-#
-#   SPREAD_START_DELAY -> SPREAD_START_DELAY + SPREAD_TURN_DURATION:
-#       rotate in place once
-#
-#   after turn -> SPREAD_START_DELAY + SPREAD_DURATION:
-#       drive straight with role-based speed
-#
-#   after SPREAD_START_DELAY + SPREAD_DURATION:
-#       switch to NN
-#
-SPREAD_START_DELAY = 2.0
-SPREAD_DURATION = 15.0
-SPREAD_TURN_DURATION = 0.0
-
-# Edges move faster than center to get over / around the prey.
-SPREAD_EDGE_LINEAR = 0.08
-SPREAD_MID_LINEAR = 0.045
-SPREAD_CENTER_LINEAR = 0.035
-
-SPREAD_TURN_ANGULAR = 0.0
-
-# If left/right is reversed in Gazebo, change this to -1.0.
-SPREAD_ANGULAR_SCALE = 1.0
-
-# Prey waits briefly so it does not escape while predator cmd_vel topics connect.
-PREY_START_DELAY = SPREAD_START_DELAY
-
-# Time between starting controllers and starting fitness evaluation.
-CONTROLLER_STARTUP_DELAY = 1.0
-
-# Ignore scripted predator setup in the fitness.
-FITNESS_WARMUP = max(
-    0.0,
-    SPREAD_START_DELAY + SPREAD_DURATION - CONTROLLER_STARTUP_DELAY,
-)
-
-
-def predator_names():
-    return [f"predator_{i}" for i in range(PREDATOR_COUNT)]
-
-
-def start_controller(name):
-    p = subprocess.Popen(
-        [
-            "python3",
-            "nn_controller.py",
-            "--ros-args",
-            "-p",
-            f"robot_name:={name}",
-            "-p",
-            f"predator_count:={PREDATOR_COUNT}",
-            "-p",
-            f"spread_start_delay:={SPREAD_START_DELAY}",
-            "-p",
-            f"spread_duration:={SPREAD_DURATION}",
-            "-p",
-            f"spread_turn_duration:={SPREAD_TURN_DURATION}",
-            "-p",
-            f"spread_edge_linear:={SPREAD_EDGE_LINEAR}",
-            "-p",
-            f"spread_mid_linear:={SPREAD_MID_LINEAR}",
-            "-p",
-            f"spread_center_linear:={SPREAD_CENTER_LINEAR}",
-            "-p",
-            f"spread_turn_angular:={SPREAD_TURN_ANGULAR}",
-            "-p",
-            f"spread_angular_scale:={SPREAD_ANGULAR_SCALE}",
-        ]
-    )
+    args = [
+        "python3", "nn_controller.py",
+        "--ros-args",
+        "-p", f"robot_name:={name}",
+        "-p", f"policy_path:={policy_path}",
+        "-p", f"predator_count:={predator_count}",
+        "-p", f"observation_type:={observation_type}",
+        "-p", f"policy_module:={policy_module}",
+        "-p", f"model_states_topic:={model_states_topic}",
+        "-p", f"spread_start_delay:={cfg_get(cfg, 'spread.start_delay', 2.0)}",
+        "-p", f"spread_duration:={cfg_get(cfg, 'spread.duration', 15.0)}",
+        "-p", f"spread_turn_duration:={cfg_get(cfg, 'spread.turn_duration', 0.0)}",
+        "-p", f"spread_edge_linear:={cfg_get(cfg, 'spread.edge_linear', 0.08)}",
+        "-p", f"spread_mid_linear:={cfg_get(cfg, 'spread.mid_linear', 0.045)}",
+        "-p", f"spread_center_linear:={cfg_get(cfg, 'spread.center_linear', 0.035)}",
+        "-p", f"spread_turn_angular:={cfg_get(cfg, 'spread.turn_angular', 0.0)}",
+        "-p", f"spread_angular_scale:={cfg_get(cfg, 'spread.angular_scale', 1.0)}",
+    ]
+    p = subprocess.Popen(args)
     processes.append(p)
 
 
-def start_prey_controller():
-    p = subprocess.Popen(
-        [
-            "python3",
-            "prey_controller.py",
-            "--ros-args",
-            "-p",
-            f"robot_name:=prey_0",
-            "-p",
-            f"start_delay:={PREY_START_DELAY}",
-            "-p",
-            f"max_forward_speed:=0.12",
-            "-p",
-            "cruise_speed:=0.04",
-            "-p",
-            "slow_speed:=0.02",
-            "-p",
-            "max_angular_speed:=1.5",
-            "-p",
-            "predator_area_th:=0.01",
-            "-p",
-            "prox_active_eps:=0.0001",
-        ]
-    )
+def start_prey_controller(cfg):
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
+    start_delay = cfg_get(cfg, "spread.start_delay", 2.0)
+
+    args = [
+        "python3", "prey_controller.py",
+        "--ros-args",
+        "-p", "robot_name:=prey_0",
+        "-p", f"predator_count:={predator_count}",
+        "-p", f"model_states_topic:={model_states_topic}",
+        "-p", f"start_delay:={start_delay}",
+        "-p", f"arena_size:={cfg_get(cfg, 'arena.size', 2.0)}",
+        "-p", f"sigma_w:={cfg_get(cfg, 'prey.sigma_w', 0.2)}",
+        "-p", f"sigma_p:={cfg_get(cfg, 'prey.sigma_p', 0.25)}",
+        "-p", f"alpha:={cfg_get(cfg, 'prey.alpha', 0.1)}",
+        "-p", f"max_forward_speed:={cfg_get(cfg, 'prey.max_forward_speed', 0.12)}",
+        "-p", f"max_angular_speed:={cfg_get(cfg, 'prey.max_angular_speed', 1.5)}",
+    ]
+    p = subprocess.Popen(args)
     processes.append(p)
-
-
-def start_all_predator_controllers():
-    for name in predator_names():
-        start_controller(name)
 
 
 def stop_all():
     global processes
 
-    if len(processes) > 0:
+    if processes:
         print("Stopping controllers...")
 
     for p in processes:
@@ -187,42 +98,43 @@ def stop_all():
     processes = []
 
 
-def save_policy(genome):
-    tmp = "current_policy_tmp.npy"
-    final = "current_policy.npy"
-
+def save_policy(genome, policy_path):
+    tmp = f"{policy_path}.tmp.npy"
     np.save(tmp, np.array(genome, dtype=np.float32))
-    os.replace(tmp, final)
+    os.replace(tmp, policy_path)
 
 
-def run_episode(genome, episode_id):
+def run_episode(genome, episode_id, cfg, policy_path):
     print(f"\n=== Episode {episode_id} ===")
-
-    robot_names = predator_names()
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    names = predator_names(predator_count)
+    model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
 
     stop_all()
     time.sleep(0.5)
-
     reset_world()
     time.sleep(1.5)
-
-    save_policy(genome)
+    save_policy(genome, policy_path)
     time.sleep(0.3)
 
-    fitness_node = CameraFitnessEvaluator(robot_names)
+    fitness_node = PaperFitnessEvaluator(names, model_states_topic=model_states_topic)
+
+    controller_startup_delay = 1.0
+    spread_start = float(cfg_get(cfg, "spread.start_delay", 2.0))
+    spread_duration = float(cfg_get(cfg, "spread.duration", 15.0))
+    warmup = max(0.0, spread_start + spread_duration - controller_startup_delay)
 
     try:
-        start_all_predator_controllers()
-        start_prey_controller()
-
-        time.sleep(CONTROLLER_STARTUP_DELAY)
+        for name in names:
+            start_controller(name, cfg, policy_path)
+        start_prey_controller(cfg)
+        time.sleep(controller_startup_delay)
 
         fitness = fitness_node.evaluate(
-            duration=EPISODE_DURATION,
-            sample_dt=0.2,
-            warmup_duration=FITNESS_WARMUP,
+            duration=float(cfg_get(cfg, "training.episode_duration", 35.0)),
+            sample_dt=float(cfg_get(cfg, "training.sample_dt", 0.2)),
+            warmup_duration=warmup,
         )
-
     finally:
         fitness_node.destroy_node()
         stop_all()
@@ -231,88 +143,50 @@ def run_episode(genome, episode_id):
     return fitness
 
 
-def evaluate_genome(genome, episode_id):
+def evaluate_genome(genome, episode_id, cfg, policy_path):
     scores = []
-
-    for _ in range(EVALS_PER_CANDIDATE):
-        fitness = run_episode(genome, episode_id)
-        scores.append(fitness)
+    for _ in range(int(cfg_get(cfg, "training.evals_per_candidate", 2))):
+        scores.append(run_episode(genome, episode_id, cfg, policy_path))
         episode_id += 1
-
-    mean_fitness = float(np.mean(scores))
-    return mean_fitness, episode_id
+    return float(np.mean(scores)), episode_id
 
 
-def make_child(parent_a, parent_b):
-    alpha = np.random.rand(N_WEIGHTS)
-
+def make_child(parent_a, parent_b, n_weights, mutation_sigma):
+    alpha = np.random.rand(n_weights)
     child = alpha * parent_a + (1.0 - alpha) * parent_b
-    child += np.random.normal(0.0, MUTATION_SIGMA, size=N_WEIGHTS)
-
+    child += np.random.normal(0.0, mutation_sigma, size=n_weights)
     return child
 
 
-def init_training_log():
-    LOG_DIR.mkdir(exist_ok=True)
-
-    with open(CSV_PATH, "w", newline="") as f:
+def init_training_log(log_dir):
+    log_dir.mkdir(exist_ok=True)
+    csv_path = log_dir / "fitness_history.csv"
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "generation",
-            "episode",
-            "candidate",
-            "fitness",
-            "loss",
-            "generation_best_fitness",
-            "generation_mean_fitness",
-            "generation_std_fitness",
+            "generation", "episode", "candidate", "fitness", "loss",
+            "generation_best_fitness", "generation_mean_fitness", "generation_std_fitness",
             "best_so_far_fitness",
         ])
+    return csv_path
 
 
-def append_training_log(
-    generation,
-    episode,
-    candidate,
-    fitness,
-    loss,
-    generation_best_fitness,
-    generation_mean_fitness,
-    generation_std_fitness,
-    best_so_far_fitness,
-):
-    with open(CSV_PATH, "a", newline="") as f:
+def append_training_log(csv_path, row):
+    with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            generation,
-            episode,
-            candidate,
-            fitness,
-            loss,
-            generation_best_fitness,
-            generation_mean_fitness,
-            generation_std_fitness,
-            best_so_far_fitness,
-        ])
+        writer.writerow(row)
 
 
-def plot_training_curve():
-    generations = []
-    gen_best = []
-    gen_mean = []
-    best_so_far = []
-
-    with open(CSV_PATH, "r", newline="") as f:
+def plot_training_curve(csv_path, plot_path):
+    generations, gen_best, gen_mean, best_so_far = [], [], [], []
+    with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
-        last_seen_generation = None
-
+        last_seen = None
         for row in reader:
             generation = int(row["generation"])
-
-            if generation == last_seen_generation:
+            if generation == last_seen:
                 continue
-
-            last_seen_generation = generation
+            last_seen = generation
             generations.append(generation)
             gen_best.append(float(row["generation_best_fitness"]))
             gen_mean.append(float(row["generation_mean_fitness"]))
@@ -326,141 +200,117 @@ def plot_training_curve():
     plt.plot(generations, gen_mean, label="Generation mean")
     plt.plot(generations, best_so_far, label="Best so far")
     plt.xlabel("Generation")
-    plt.ylabel("Fitness")
-    plt.title("Genetic Algorithm Fitness Over Time")
+    plt.ylabel("Paper fitness")
+    plt.title("GA Fitness Over Time")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(PLOT_PATH)
+    plt.savefig(plot_path)
     plt.close()
 
 
 def main():
-    rclpy.init()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
 
+    cfg = load_config(args.config)
+    mode = cfg_get(cfg, "experiment.mode", "experiment")
+    policy_module_name = cfg_get(cfg, "policy.module", "policies.policy_fpv")
+    policy_module = importlib.import_module(policy_module_name)
+    n_weights = policy_module.N_WEIGHTS
+
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    arena_size = float(cfg_get(cfg, "arena.size", 2.0))
+    pop_size = int(cfg_get(cfg, "training.pop_size", 12))
+    elites_n = int(cfg_get(cfg, "training.elites", 4))
+    generations = int(cfg_get(cfg, "training.generations", 35))
+    init_sigma = float(cfg_get(cfg, "training.init_sigma", 0.20))
+    mutation_sigma = float(cfg_get(cfg, "training.mutation_sigma", 0.12))
+
+    log_dir = Path("training_logs") / mode
+    csv_path = init_training_log(log_dir)
+    plot_path = log_dir / "fitness_curve.png"
+    policy_path = f"current_policy_{mode}.npy"
+    best_policy_path = f"best_policy_{mode}.npy"
+
+    rclpy.init()
     best_fitness = -999999.0
     episode_id = 0
 
-    init_training_log()
-
-    population = np.random.normal(
-        0.0,
-        INIT_SIGMA,
-        size=(POP_SIZE, N_WEIGHTS),
-    )
+    population = np.random.normal(0.0, init_sigma, size=(pop_size, n_weights))
 
     try:
         print("Clearing and spawning simulation...")
         clear_simulation()
         time.sleep(1.0)
-
-        spawn_default_world(predator_count=PREDATOR_COUNT)
+        spawn_default_world(predator_count=predator_count, arena_size=arena_size)
         time.sleep(2.0)
 
-        print("\n4-predator role-input + team-capture fitness settings:")
-        print(f"  PREDATOR_COUNT={PREDATOR_COUNT}")
-        print(f"  N_WEIGHTS={N_WEIGHTS}")
-        print(f"  POP_SIZE={POP_SIZE}")
-        print(f"  ELITES={ELITES}")
-        print(f"  GENERATIONS={GENERATIONS}")
-        print(f"  MUTATION_SIGMA={MUTATION_SIGMA}")
-        print(f"  EVALS_PER_CANDIDATE={EVALS_PER_CANDIDATE}")
-        print(f"  SPREAD_START_DELAY={SPREAD_START_DELAY}")
-        print(f"  SPREAD_DURATION={SPREAD_DURATION}")
-        print(f"  SPREAD_TURN_DURATION={SPREAD_TURN_DURATION}")
-        print(f"  SPREAD_EDGE_LINEAR={SPREAD_EDGE_LINEAR}")
-        print(f"  SPREAD_MID_LINEAR={SPREAD_MID_LINEAR}")
-        print(f"  SPREAD_CENTER_LINEAR={SPREAD_CENTER_LINEAR}")
-        print(f"  SPREAD_TURN_ANGULAR={SPREAD_TURN_ANGULAR}")
-        print(f"  SPREAD_ANGULAR_SCALE={SPREAD_ANGULAR_SCALE}")
-        print(f"  PREY_START_DELAY={PREY_START_DELAY}")
-        print(f"  FITNESS_WARMUP={FITNESS_WARMUP}")
-        print(f"  EPISODE_DURATION={EPISODE_DURATION}")
+        print(f"\nExperiment mode: {mode}")
+        print(f"  arena_size={arena_size}m x {arena_size}m")
+        print(f"  predators={predator_count}")
+        print(f"  observation={cfg_get(cfg, 'observation.type')}")
+        print(f"  policy={policy_module_name}")
+        print(f"  N_WEIGHTS={n_weights}")
+        print(f"  fitness=paper ground-truth fitness for all modes")
 
-        for generation in range(GENERATIONS):
+        for generation in range(generations):
             print(f"\n========== GENERATION {generation} ==========")
-
-            generation_fitnesses = []
-            generation_records = []
+            fitnesses = []
+            records = []
 
             for candidate_id, genome in enumerate(population):
-                fitness, episode_id = evaluate_genome(genome, episode_id)
+                fitness, episode_id = evaluate_genome(genome, episode_id, cfg, policy_path)
+                fitnesses.append(fitness)
                 loss = -fitness
-
-                generation_fitnesses.append(fitness)
 
                 if fitness > best_fitness:
                     best_fitness = fitness
-                    np.save("best_policy.npy", np.array(genome, dtype=np.float32))
+                    np.save(best_policy_path, np.array(genome, dtype=np.float32))
                     print(f"NEW BEST FITNESS: {best_fitness:.4f}")
 
-                generation_records.append({
-                    "generation": generation,
-                    "episode": episode_id,
-                    "candidate": candidate_id,
-                    "fitness": fitness,
-                    "loss": loss,
-                })
+                records.append((generation, episode_id, candidate_id, fitness, loss))
 
-            generation_fitnesses = np.array(generation_fitnesses)
+            fitnesses = np.array(fitnesses)
+            gen_best = float(np.max(fitnesses))
+            gen_mean = float(np.mean(fitnesses))
+            gen_std = float(np.std(fitnesses))
 
-            generation_best = float(np.max(generation_fitnesses))
-            generation_mean = float(np.mean(generation_fitnesses))
-            generation_std = float(np.std(generation_fitnesses))
+            for generation_, episode_, candidate_, fitness_, loss_ in records:
+                append_training_log(csv_path, [
+                    generation_, episode_, candidate_, fitness_, loss_,
+                    gen_best, gen_mean, gen_std, best_fitness,
+                ])
 
-            for record in generation_records:
-                append_training_log(
-                    generation=record["generation"],
-                    episode=record["episode"],
-                    candidate=record["candidate"],
-                    fitness=record["fitness"],
-                    loss=record["loss"],
-                    generation_best_fitness=generation_best,
-                    generation_mean_fitness=generation_mean,
-                    generation_std_fitness=generation_std,
-                    best_so_far_fitness=best_fitness,
-                )
-
-            plot_training_curve()
-
+            plot_training_curve(csv_path, plot_path)
             print(
-                f"Generation {generation}: "
-                f"best={generation_best:.4f}, "
-                f"mean={generation_mean:.4f}, "
-                f"std={generation_std:.4f}, "
-                f"best_so_far={best_fitness:.4f}"
+                f"Generation {generation}: best={gen_best:.4f}, mean={gen_mean:.4f}, "
+                f"std={gen_std:.4f}, best_so_far={best_fitness:.4f}"
             )
 
-            sorted_idx = np.argsort(generation_fitnesses)[::-1]
+            sorted_idx = np.argsort(fitnesses)[::-1]
+            elites = population[sorted_idx[:elites_n]].copy()
+            new_population = [elite.copy() for elite in elites]
 
-            elites = population[sorted_idx[:ELITES]].copy()
-
-            new_population = []
-
-            for elite in elites:
-                new_population.append(elite.copy())
-
-            while len(new_population) < POP_SIZE:
-                parent_ids = np.random.choice(ELITES, size=2, replace=True)
-
-                parent_a = elites[parent_ids[0]]
-                parent_b = elites[parent_ids[1]]
-
-                child = make_child(parent_a, parent_b)
+            while len(new_population) < pop_size:
+                parent_ids = np.random.choice(elites_n, size=2, replace=True)
+                child = make_child(elites[parent_ids[0]], elites[parent_ids[1]], n_weights, mutation_sigma)
                 new_population.append(child)
 
             population = np.array(new_population)
 
         print("\nTraining finished.")
         print(f"Best fitness: {best_fitness:.4f}")
+        print(f"Best policy: {best_policy_path}")
 
     except KeyboardInterrupt:
         print("\nInterrupted!")
-
     finally:
         stop_all()
         clear_simulation()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

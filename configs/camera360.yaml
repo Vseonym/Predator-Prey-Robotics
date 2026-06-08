@@ -1,0 +1,46 @@
+experiment:
+  mode: camera360
+
+arena:
+  size: 2.0
+
+predators:
+  count: 3
+
+observation:
+  type: camera360
+
+policy:
+  module: policies.policy_camera360
+
+fitness:
+  type: paper
+  model_states_topic: /model_states
+
+prey:
+  controller: gaussian
+  sigma_w: 0.2
+  sigma_p: 0.25
+  alpha: 0.1
+  max_forward_speed: 0.12
+  max_angular_speed: 1.5
+
+training:
+  pop_size: 12
+  elites: 4
+  generations: 35
+  init_sigma: 0.20
+  mutation_sigma: 0.12
+  evals_per_candidate: 2
+  episode_duration: 35.0
+  sample_dt: 0.2
+
+spread:
+  start_delay: 2.0
+  duration: 15.0
+  turn_duration: 0.0
+  edge_linear: 0.08
+  mid_linear: 0.045
+  center_linear: 0.035
+  turn_angular: 0.0
+  angular_scale: 1.0
