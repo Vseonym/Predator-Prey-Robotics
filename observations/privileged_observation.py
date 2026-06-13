@@ -1,30 +1,29 @@
 import math
 import numpy as np
-from gazebo_msgs.msg import ModelStates
-from model_state_utils import model_pose_dict, pose_xy_yaw, angle_wrap
+
+from model_state_utils import OdomStore, angle_wrap
 
 
 class PrivilegedObservation:
-    def __init__(self, node, robot_name, predator_count, model_states_topic="/model_states"):
+    def __init__(self, node, robot_name, predator_count, model_states_topic=None):
         self.node = node
         self.robot_name = robot_name
         self.predator_count = predator_count
-        self.model_states = None
-        node.create_subscription(ModelStates, model_states_topic, self.model_states_callback, 10)
-
-    def model_states_callback(self, msg):
-        self.model_states = msg
+        self.predator_names = [f"predator_{i}" for i in range(predator_count)]
+        self.all_robot_names = self.predator_names + ["prey_0"]
+        self.odom_store = OdomStore(node, self.all_robot_names)
 
     def get_features(self):
-        if self.model_states is None:
+        if not self.odom_store.has_all(self.all_robot_names):
             return None
 
-        poses = model_pose_dict(self.model_states)
-        if self.robot_name not in poses or "prey_0" not in poses:
+        self_pose = self.odom_store.xy_yaw(self.robot_name)
+        prey_pose = self.odom_store.xy_yaw("prey_0")
+        if self_pose is None or prey_pose is None:
             return None
 
-        x, y, yaw = pose_xy_yaw(poses[self.robot_name])
-        prey_x, prey_y, _ = pose_xy_yaw(poses["prey_0"])
+        x, y, yaw = self_pose
+        prey_x, prey_y, _ = prey_pose
 
         dx = prey_x - x
         dy = prey_y - y
@@ -35,17 +34,18 @@ class PrivilegedObservation:
         nearest_signed = 0.0
         nearest_dist = float("inf")
 
-        for i in range(self.predator_count):
-            other = f"predator_{i}"
-            if other == self.robot_name or other not in poses:
+        for other in self.predator_names:
+            if other == self.robot_name:
                 continue
-            ox, oy, _ = pose_xy_yaw(poses[other])
+            other_pose = self.odom_store.xy_yaw(other)
+            if other_pose is None:
+                continue
+            ox, oy, _ = other_pose
             odx = ox - x
             ody = oy - y
             dist = math.hypot(odx, ody)
             if dist < nearest_dist:
                 nearest_dist = dist
-                # sign by relative bearing: left positive, right negative.
                 bearing = angle_wrap(math.atan2(ody, odx) - yaw)
                 sign = 1.0 if bearing >= 0.0 else -1.0
                 nearest_signed = sign * dist
@@ -53,5 +53,5 @@ class PrivilegedObservation:
         if not math.isfinite(nearest_dist):
             nearest_signed = 0.0
 
-        # Normalize distance roughly by arena diagonal of 2x2 square.
+        # Normalize distances by approximate 2m x 2m arena diagonal.
         return np.array([nearest_signed / 2.828, delta_theta, d / 2.828], dtype=np.float32)

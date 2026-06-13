@@ -1,128 +1,61 @@
+import argparse
 import os
-import time
 import signal
 import subprocess
+import time
 
-import rclpy
 import numpy as np
+import rclpy
 
-from fitness import CameraFitnessEvaluator
+from config_utils import load_config, cfg_get
+from fitness import PaperFitnessEvaluator
 from spawn_robots import reset_world, spawn_default_world, clear_simulation
 
 
 processes = []
 
 
-# =========================
-# Evaluation settings
-# =========================
-
-PREDATOR_COUNT = 4
-POLICY_PATH = "best_policy.npy"
-NUM_EPISODES = 5
-
-# Keep aligned with run_simulation.py.
-EPISODE_DURATION = 50.0
+def predator_names(predator_count):
+    return [f"predator_{i}" for i in range(predator_count)]
 
 
-# =========================
-# Scripted spread settings
-# =========================
+def start_controller(name, cfg, policy_path):
+    args = [
+        "python3", "nn_controller.py",
+        "--ros-args",
+        "-p", f"robot_name:={name}",
+        "-p", f"policy_path:={policy_path}",
+        "-p", f"predator_count:={cfg_get(cfg, 'predators.count', 3)}",
+        "-p", f"observation_type:={cfg_get(cfg, 'observation.type', 'fpv')}",
+        "-p", f"policy_module:={cfg_get(cfg, 'policy.module', 'policies.policy_fpv')}",
+        "-p", f"startup_delay:={cfg_get(cfg, 'startup.controller_delay', 2.0)}",
+    ]
 
-SPREAD_START_DELAY = 2.0
-SPREAD_DURATION = 15.0
-SPREAD_TURN_DURATION = 0.0
-
-SPREAD_EDGE_LINEAR = 0.08
-SPREAD_MID_LINEAR = 0.045
-SPREAD_CENTER_LINEAR = 0.035
-
-SPREAD_TURN_ANGULAR = 0.0
-SPREAD_ANGULAR_SCALE = 1.0
-
-PREY_START_DELAY = SPREAD_START_DELAY
-CONTROLLER_STARTUP_DELAY = 1.0
-
-FITNESS_WARMUP = max(
-    0.0,
-    SPREAD_START_DELAY + SPREAD_DURATION - CONTROLLER_STARTUP_DELAY,
-)
-
-
-def predator_names():
-    return [f"predator_{i}" for i in range(PREDATOR_COUNT)]
-
-
-def start_controller(name, policy_path=POLICY_PATH):
-    p = subprocess.Popen(
-        [
-            "python3",
-            "nn_controller.py",
-            "--ros-args",
-            "-p",
-            f"robot_name:={name}",
-            "-p",
-            f"policy_path:={policy_path}",
-            "-p",
-            f"predator_count:={PREDATOR_COUNT}",
-            "-p",
-            f"spread_start_delay:={SPREAD_START_DELAY}",
-            "-p",
-            f"spread_duration:={SPREAD_DURATION}",
-            "-p",
-            f"spread_turn_duration:={SPREAD_TURN_DURATION}",
-            "-p",
-            f"spread_edge_linear:={SPREAD_EDGE_LINEAR}",
-            "-p",
-            f"spread_mid_linear:={SPREAD_MID_LINEAR}",
-            "-p",
-            f"spread_center_linear:={SPREAD_CENTER_LINEAR}",
-            "-p",
-            f"spread_turn_angular:={SPREAD_TURN_ANGULAR}",
-            "-p",
-            f"spread_angular_scale:={SPREAD_ANGULAR_SCALE}",
-        ]
-    )
+    p = subprocess.Popen(args)
     processes.append(p)
 
 
-def start_all_predator_controllers(policy_path=POLICY_PATH):
-    for name in predator_names():
-        start_controller(name, policy_path)
+def start_prey_controller(cfg):
+    args = [
+        "python3", "prey_controller.py",
+        "--ros-args",
+        "-p", "robot_name:=prey_0",
+        "-p", f"predator_count:={cfg_get(cfg, 'predators.count', 3)}",
+        "-p", f"start_delay:={cfg_get(cfg, 'startup.controller_delay', 2.0)}",
+        "-p", f"arena_size:={cfg_get(cfg, 'arena.size', 2.0)}",
+        "-p", f"sigma_w:={cfg_get(cfg, 'prey.sigma_w', 0.2)}",
+        "-p", f"sigma_p:={cfg_get(cfg, 'prey.sigma_p', 0.25)}",
+        "-p", f"alpha:={cfg_get(cfg, 'prey.alpha', 0.1)}",
+        "-p", f"max_forward_speed:={cfg_get(cfg, 'prey.max_forward_speed', 0.12)}",
+        "-p", f"max_angular_speed:={cfg_get(cfg, 'prey.max_angular_speed', 1.5)}",
+    ]
 
-
-def start_prey_controller():
-    p = subprocess.Popen(
-        [
-            "python3",
-            "prey_controller.py",
-            "--ros-args",
-            "-p",
-            "robot_name:=prey_0",
-            "-p",
-            f"start_delay:={PREY_START_DELAY}",
-            "-p",
-            "max_forward_speed:=0.12",
-            "-p",
-            "cruise_speed:=0.04",
-            "-p",
-            "slow_speed:=0.02",
-            "-p",
-            "max_angular_speed:=1.5",
-            "-p",
-            "predator_area_th:=0.01",
-            "-p",
-            "prox_active_eps:=0.0001",
-        ]
-    )
+    p = subprocess.Popen(args)
     processes.append(p)
 
 
 def stop_all():
     global processes
-
-    if processes:
-        print("Stopping controllers...")
 
     for p in processes:
         if p.poll() is None:
@@ -135,38 +68,18 @@ def stop_all():
             p.kill()
             p.wait()
 
-    subprocess.run(
-        ["pkill", "-f", "nn_controller.py"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    subprocess.run(
-        ["pkill", "-f", "prey_controller.py"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    subprocess.run(["pkill", "-f", "nn_controller.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-f", "prey_controller.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     processes = []
 
 
-def stop_robots():
-    """
-    Send zero cmd_vel to all predators and prey.
-    Useful because Gazebo may keep the last velocity command briefly.
-    """
-    robot_names = predator_names() + ["prey_0"]
-
-    for robot_name in robot_names:
-        topic = f"/{robot_name}/cmd_vel"
-
+def stop_robots(predator_count):
+    for robot_name in predator_names(predator_count) + ["prey_0"]:
         subprocess.run(
             [
-                "ros2",
-                "topic",
-                "pub",
-                "--once",
-                topic,
+                "ros2", "topic", "pub", "--once",
+                f"/{robot_name}/cmd_vel",
                 "geometry_msgs/msg/Twist",
                 "{}",
             ],
@@ -175,102 +88,108 @@ def stop_robots():
         )
 
 
-def evaluate_once(episode_id, policy_path=POLICY_PATH):
+def evaluate_once(episode_id, cfg, policy_path):
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    robot_names = predator_names(predator_count)
+    startup_delay = float(cfg_get(cfg, "startup.controller_delay", 2.0))
+
     print(f"\n=== Evaluation episode {episode_id} ===")
 
-    robot_names = predator_names()
-
     stop_all()
-    stop_robots()
+    stop_robots(predator_count)
     time.sleep(0.5)
 
     reset_world()
     time.sleep(1.5)
 
-    fitness_node = CameraFitnessEvaluator(robot_names)
+    fitness_node = PaperFitnessEvaluator(robot_names)
 
     try:
-        start_all_predator_controllers(policy_path=policy_path)
-        start_prey_controller()
+        for name in robot_names:
+            start_controller(name, cfg, policy_path)
 
-        time.sleep(CONTROLLER_STARTUP_DELAY)
+        start_prey_controller(cfg)
+
+        time.sleep(startup_delay)
 
         fitness = fitness_node.evaluate(
-            duration=EPISODE_DURATION,
-            sample_dt=0.2,
-            warmup_duration=FITNESS_WARMUP,
+            duration=float(cfg_get(cfg, "training.episode_duration", 30.0)),
+            sample_dt=float(cfg_get(cfg, "training.sample_dt", 0.2)),
+            warmup_duration=0.0,
         )
 
     finally:
         fitness_node.destroy_node()
         stop_all()
-        stop_robots()
+        stop_robots(predator_count)
 
     print(f"Evaluation episode {episode_id} fitness = {fitness:.4f}")
     return fitness
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--policy", default=None)
+    parser.add_argument("--episodes", type=int, default=5)
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    mode = cfg_get(cfg, "experiment.mode", "experiment")
+    predator_count = int(cfg_get(cfg, "predators.count", 3))
+    arena_size = float(cfg_get(cfg, "arena.size", 2.0))
+
+    policy_path = args.policy or f"best_policy_{mode}.npy"
+
+    if not os.path.exists(policy_path):
+        raise FileNotFoundError(f"Could not find policy file: {policy_path}")
+
     rclpy.init()
 
     try:
-        if not os.path.exists(POLICY_PATH):
-            raise FileNotFoundError(f"Could not find {POLICY_PATH}")
+        print(f"Using config: {args.config}")
+        print(f"Using policy: {policy_path}")
+        print(f"Mode: {mode}")
+        print(f"Predators: {predator_count}")
+        print(f"Arena: {arena_size}m x {arena_size}m")
+        print(f"Observation: {cfg_get(cfg, 'observation.type')}")
+        print(f"Policy module: {cfg_get(cfg, 'policy.module')}")
+        print(f"Episodes: {args.episodes}")
 
-        print(f"Using policy: {POLICY_PATH}")
-
-        print("\nEvaluation settings:")
-        print(f"  PREDATOR_COUNT={PREDATOR_COUNT}")
-        print(f"  NUM_EPISODES={NUM_EPISODES}")
-        print(f"  EPISODE_DURATION={EPISODE_DURATION}")
-        print(f"  SPREAD_START_DELAY={SPREAD_START_DELAY}")
-        print(f"  SPREAD_DURATION={SPREAD_DURATION}")
-        print(f"  SPREAD_TURN_DURATION={SPREAD_TURN_DURATION}")
-        print(f"  SPREAD_EDGE_LINEAR={SPREAD_EDGE_LINEAR}")
-        print(f"  SPREAD_MID_LINEAR={SPREAD_MID_LINEAR}")
-        print(f"  SPREAD_CENTER_LINEAR={SPREAD_CENTER_LINEAR}")
-        print(f"  SPREAD_TURN_ANGULAR={SPREAD_TURN_ANGULAR}")
-        print(f"  SPREAD_ANGULAR_SCALE={SPREAD_ANGULAR_SCALE}")
-        print(f"  PREY_START_DELAY={PREY_START_DELAY}")
-        print(f"  CONTROLLER_STARTUP_DELAY={CONTROLLER_STARTUP_DELAY}")
-        print(f"  FITNESS_WARMUP={FITNESS_WARMUP}")
-
-        print("\nClearing existing simulation...")
         clear_simulation()
         time.sleep(1.0)
 
-        print("Spawning predators and prey...")
-        spawn_default_world(predator_count=PREDATOR_COUNT)
+        spawn_default_world(
+            predator_count=predator_count,
+            arena_size=arena_size,
+        )
         time.sleep(2.0)
 
         fitnesses = []
 
-        for episode_id in range(NUM_EPISODES):
-            fitness = evaluate_once(
-                episode_id=episode_id,
-                policy_path=POLICY_PATH,
+        for episode_id in range(args.episodes):
+            fitnesses.append(
+                evaluate_once(
+                    episode_id=episode_id,
+                    cfg=cfg,
+                    policy_path=policy_path,
+                )
             )
-            fitnesses.append(fitness)
 
         print("\n" + "=" * 80)
         print("BEST POLICY EVALUATION SUMMARY")
         print("=" * 80)
-        print(f"episodes: {NUM_EPISODES}")
-        print(f"duration per episode: {EPISODE_DURATION}")
+        print(f"policy: {policy_path}")
+        print(f"episodes: {args.episodes}")
         print(f"fitnesses: {[round(f, 4) for f in fitnesses]}")
         print(f"mean fitness: {np.mean(fitnesses):.4f}")
         print(f"std fitness: {np.std(fitnesses):.4f}")
         print(f"best fitness: {np.max(fitnesses):.4f}")
         print(f"worst fitness: {np.min(fitnesses):.4f}")
 
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
-
     finally:
         stop_all()
-        stop_robots()
-
-        print("Cleaning simulation...")
+        stop_robots(predator_count)
         clear_simulation()
 
         if rclpy.ok():

@@ -19,5 +19,45 @@ def pose_xy_yaw(pose):
     return pose.position.x, pose.position.y, quat_to_yaw(pose.orientation)
 
 
-def model_pose_dict(model_states_msg):
-    return {name: pose for name, pose in zip(model_states_msg.name, model_states_msg.pose)}
+def odom_xy_yaw(odom_msg):
+    return pose_xy_yaw(odom_msg.pose.pose)
+
+
+class OdomStore:
+    """
+    Small helper for storing latest ground-truth odometry by robot name.
+
+    Expected topics:
+      /predator_0/ground_truth/odom
+      /predator_1/ground_truth/odom
+      ...
+      /prey_0/ground_truth/odom
+    """
+
+    def __init__(self, node, robot_names):
+        from nav_msgs.msg import Odometry
+
+        self.node = node
+        self.robot_names = list(robot_names)
+        self.odom = {name: None for name in self.robot_names}
+
+        for name in self.robot_names:
+            node.create_subscription(
+                Odometry,
+                f"/{name}/ground_truth/odom",
+                lambda msg, robot=name: self.odom_callback(msg, robot),
+                10,
+            )
+
+    def odom_callback(self, msg, robot_name):
+        self.odom[robot_name] = msg
+
+    def has_all(self, names=None):
+        names = self.robot_names if names is None else names
+        return all(self.odom.get(name) is not None for name in names)
+
+    def xy_yaw(self, robot_name):
+        msg = self.odom.get(robot_name)
+        if msg is None:
+            return None
+        return odom_xy_yaw(msg)

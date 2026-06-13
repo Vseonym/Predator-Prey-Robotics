@@ -3,9 +3,8 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from gazebo_msgs.msg import ModelStates
 
-from model_state_utils import model_pose_dict, pose_xy_yaw
+from model_state_utils import OdomStore
 
 
 class PaperFitnessEvaluator(Node):
@@ -17,34 +16,32 @@ class PaperFitnessEvaluator(Node):
     D_i = distance from predator i to prey
     R_i = distance from predator i to nearest other predator
 
-    The controller may be FPV/360/privileged, but the evaluator is allowed
-    to use Gazebo ground truth because this is a simulation training metric.
+    This version uses each robot's ground-truth odometry topic instead of
+    /model_states, because /model_states has no publisher in this setup.
     """
 
-    def __init__(self, robot_names, model_states_topic="/model_states"):
+    def __init__(self, robot_names, model_states_topic=None):
         super().__init__("paper_fitness_evaluator")
-        self.robot_names = robot_names
-        self.model_states = None
-        self.create_subscription(ModelStates, model_states_topic, self.model_states_callback, 10)
-
-    def model_states_callback(self, msg):
-        self.model_states = msg
+        self.robot_names = list(robot_names)
+        self.all_robot_names = self.robot_names + ["prey_0"]
+        self.odom_store = OdomStore(self, self.all_robot_names)
 
     def compute_step_fitness(self):
-        if self.model_states is None:
+        if not self.odom_store.has_all(self.all_robot_names):
             return 0.0
 
-        poses = model_pose_dict(self.model_states)
-        if "prey_0" not in poses:
+        prey_pose = self.odom_store.xy_yaw("prey_0")
+        if prey_pose is None:
             return 0.0
 
-        prey_x, prey_y, _ = pose_xy_yaw(poses["prey_0"])
+        prey_x, prey_y, _ = prey_pose
         predator_positions = []
 
         for name in self.robot_names:
-            if name not in poses:
+            pose = self.odom_store.xy_yaw(name)
+            if pose is None:
                 return 0.0
-            x, y, _ = pose_xy_yaw(poses[name])
+            x, y, _ = pose
             predator_positions.append((name, x, y))
 
         if not predator_positions:

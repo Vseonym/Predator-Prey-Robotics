@@ -74,7 +74,7 @@ class Camera360Observation:
         # Approximate angular order, left-to-right:
         # rear seam | right | front | left | rear seam
         # Front camera remains centered in the panorama.
-        return np.hstack([rear_left_half, right, front, left, rear_right_half])
+        return np.hstack([rear_right_half, left, front, right, rear_left_half])
 
     def get_features(self):
         panorama = self.build_panorama()

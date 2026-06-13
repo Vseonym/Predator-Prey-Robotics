@@ -169,7 +169,7 @@ def spawn_robot(name, x, y, color="Gazebo/White", yaw=math.pi / 2):
 
     ok = safe_call(
         f"xacro $(ros2 pkg prefix thymio_description)/share/thymio_description/urdf/thymio.urdf.xacro "
-        f"name:={name} body_color:={color} > {urdf_path}",
+        f"name:={name} body_color:={color} publish_ground_truth:=true > {urdf_path}",
         timeout=5,
     )
 

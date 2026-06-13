@@ -82,13 +82,21 @@ def stop_all():
 
     for p in processes:
         try:
-            p.wait(timeout=3.0)
+            p.wait(timeout=2.0)
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
 
-    subprocess.run(["pkill", "-f", "nn_controller.py"])
-    subprocess.run(["pkill", "-f", "prey_controller.py"])
+    subprocess.run(
+        ["pkill", "-f", "nn_controller.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["pkill", "-f", "prey_controller.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     processes = []
 
 
@@ -105,12 +113,18 @@ def run_episode(genome, episode_id, cfg, policy_path):
     model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
     controller_startup_delay = float(cfg_get(cfg, "startup.controller_delay", 2.0))
 
+    stop_sleep = float(cfg_get(cfg, "timing.stop_sleep", 0.2))
+    reset_sleep = float(cfg_get(cfg, "timing.reset_sleep", 0.8))
+    policy_sleep = float(cfg_get(cfg, "timing.policy_sleep", 0.05))
+
     stop_all()
-    time.sleep(0.5)
+    time.sleep(stop_sleep)
+
     reset_world()
-    time.sleep(1.5)
+    time.sleep(reset_sleep)
+
     save_policy(genome, policy_path)
-    time.sleep(0.3)
+    time.sleep(policy_sleep)
 
     fitness_node = PaperFitnessEvaluator(names, model_states_topic=model_states_topic)
 
@@ -151,13 +165,13 @@ def make_child(parent_a, parent_b, n_weights, mutation_sigma):
     return child
 
 
-def init_training_log(log_dir):
+def init_training_log(log_dir, optimizer_type):
     log_dir.mkdir(parents=True, exist_ok=True)
     csv_path = log_dir / "fitness_history.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "generation", "episode", "candidate", "fitness", "loss",
+            "optimizer", "generation", "episode", "candidate", "fitness", "loss",
             "generation_best_fitness", "generation_mean_fitness", "generation_std_fitness",
             "best_so_far_fitness",
         ])
@@ -170,7 +184,7 @@ def append_training_log(csv_path, row):
         writer.writerow(row)
 
 
-def plot_training_curve(csv_path, plot_path):
+def plot_training_curve(csv_path, plot_path, optimizer_type):
     generations, gen_best, gen_mean, best_so_far = [], [], [], []
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -194,12 +208,147 @@ def plot_training_curve(csv_path, plot_path):
     plt.plot(generations, best_so_far, label="Best so far")
     plt.xlabel("Generation")
     plt.ylabel("Paper fitness")
-    plt.title("GA Fitness Over Time")
+    plt.title(f"{optimizer_type.upper()} Fitness Over Time")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(plot_path)
     plt.close()
+
+
+def run_ga(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
+    pop_size = int(cfg_get(cfg, "training.pop_size", 12))
+    elites_n = int(cfg_get(cfg, "training.elites", 4))
+    generations = int(cfg_get(cfg, "training.generations", 35))
+    init_sigma = float(cfg_get(cfg, "training.init_sigma", 0.20))
+    mutation_sigma = float(cfg_get(cfg, "training.mutation_sigma", 0.12))
+
+    best_fitness = -999999.0
+    episode_id = 0
+
+    population = np.random.normal(0.0, init_sigma, size=(pop_size, n_weights))
+
+    for generation in range(generations):
+        print(f"\n========== GENERATION {generation} (GA) ==========")
+        fitnesses = []
+        records = []
+
+        for candidate_id, genome in enumerate(population):
+            fitness, episode_id = evaluate_genome(genome, episode_id, cfg, policy_path)
+            fitnesses.append(fitness)
+            loss = -fitness
+
+            if fitness > best_fitness:
+                best_fitness = fitness
+                np.save(best_policy_path, np.array(genome, dtype=np.float32))
+                print(f"NEW BEST FITNESS: {best_fitness:.4f}")
+
+            records.append((generation, episode_id, candidate_id, fitness, loss))
+
+        fitnesses = np.array(fitnesses)
+        gen_best = float(np.max(fitnesses))
+        gen_mean = float(np.mean(fitnesses))
+        gen_std = float(np.std(fitnesses))
+
+        for generation_, episode_, candidate_, fitness_, loss_ in records:
+            append_training_log(csv_path, [
+                "ga", generation_, episode_, candidate_, fitness_, loss_,
+                gen_best, gen_mean, gen_std, best_fitness,
+            ])
+
+        plot_training_curve(csv_path, plot_path, "ga")
+        print(
+            f"Generation {generation}: best={gen_best:.4f}, mean={gen_mean:.4f}, "
+            f"std={gen_std:.4f}, best_so_far={best_fitness:.4f}"
+        )
+
+        sorted_idx = np.argsort(fitnesses)[::-1]
+        elites = population[sorted_idx[:elites_n]].copy()
+        new_population = [elite.copy() for elite in elites]
+
+        while len(new_population) < pop_size:
+            parent_ids = np.random.choice(elites_n, size=2, replace=True)
+            child = make_child(
+                elites[parent_ids[0]],
+                elites[parent_ids[1]],
+                n_weights,
+                mutation_sigma,
+            )
+            new_population.append(child)
+
+        population = np.array(new_population)
+
+    return best_fitness
+
+
+def run_cmaes(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
+    try:
+        import cma
+    except ImportError as exc:
+        raise ImportError(
+            "CMA-ES selected, but package 'cma' is not installed. "
+            "Install it with: pip install cma"
+        ) from exc
+
+    pop_size = int(cfg_get(cfg, "training.pop_size", 13))
+    generations = int(cfg_get(cfg, "training.generations", 35))
+    sigma = float(cfg_get(cfg, "optimizer.sigma", 0.5))
+    initial_mean = np.zeros(n_weights, dtype=np.float32)
+
+    # Keep CMA-ES output readable. Our own logging prints the useful values.
+    opts = {
+        "popsize": pop_size,
+        "verbose": -9,
+    }
+
+    es = cma.CMAEvolutionStrategy(initial_mean, sigma, opts)
+
+    best_fitness = -999999.0
+    episode_id = 0
+
+    for generation in range(generations):
+        print(f"\n========== GENERATION {generation} (CMA-ES) ==========")
+
+        solutions = es.ask()
+        losses = []
+        fitnesses = []
+        records = []
+
+        for candidate_id, genome in enumerate(solutions):
+            genome = np.asarray(genome, dtype=np.float32)
+            fitness, episode_id = evaluate_genome(genome, episode_id, cfg, policy_path)
+            loss = -fitness
+
+            fitnesses.append(fitness)
+            losses.append(loss)
+
+            if fitness > best_fitness:
+                best_fitness = fitness
+                np.save(best_policy_path, genome)
+                print(f"NEW BEST FITNESS: {best_fitness:.4f}")
+
+            records.append((generation, episode_id, candidate_id, fitness, loss))
+
+        es.tell(solutions, losses)
+
+        fitnesses = np.array(fitnesses)
+        gen_best = float(np.max(fitnesses))
+        gen_mean = float(np.mean(fitnesses))
+        gen_std = float(np.std(fitnesses))
+
+        for generation_, episode_, candidate_, fitness_, loss_ in records:
+            append_training_log(csv_path, [
+                "cmaes", generation_, episode_, candidate_, fitness_, loss_,
+                gen_best, gen_mean, gen_std, best_fitness,
+            ])
+
+        plot_training_curve(csv_path, plot_path, "cmaes")
+        print(
+            f"Generation {generation}: best={gen_best:.4f}, mean={gen_mean:.4f}, "
+            f"std={gen_std:.4f}, best_so_far={best_fitness:.4f}, sigma={es.sigma:.4f}"
+        )
+
+    return best_fitness
 
 
 def main():
@@ -213,87 +362,60 @@ def main():
     policy_module = importlib.import_module(policy_module_name)
     n_weights = policy_module.N_WEIGHTS
 
+    optimizer_type = str(cfg_get(cfg, "optimizer.type", "ga")).lower()
+
     predator_count = int(cfg_get(cfg, "predators.count", 3))
     arena_size = float(cfg_get(cfg, "arena.size", 2.0))
-    pop_size = int(cfg_get(cfg, "training.pop_size", 12))
-    elites_n = int(cfg_get(cfg, "training.elites", 4))
-    generations = int(cfg_get(cfg, "training.generations", 35))
-    init_sigma = float(cfg_get(cfg, "training.init_sigma", 0.20))
-    mutation_sigma = float(cfg_get(cfg, "training.mutation_sigma", 0.12))
 
     log_dir = Path("training_logs") / mode
-    csv_path = init_training_log(log_dir)
+    csv_path = init_training_log(log_dir, optimizer_type)
     plot_path = log_dir / "fitness_curve.png"
     policy_path = f"current_policy_{mode}.npy"
     best_policy_path = f"best_policy_{mode}.npy"
 
     rclpy.init()
-    best_fitness = -999999.0
-    episode_id = 0
-
-    population = np.random.normal(0.0, init_sigma, size=(pop_size, n_weights))
 
     try:
         print("Clearing and spawning simulation...")
         clear_simulation()
-        time.sleep(1.0)
+        time.sleep(float(cfg_get(cfg, "timing.clear_sleep", 1.0)))
+
         spawn_default_world(predator_count=predator_count, arena_size=arena_size)
-        time.sleep(2.0)
+        time.sleep(float(cfg_get(cfg, "timing.spawn_sleep", 2.0)))
 
         print(f"\nExperiment mode: {mode}")
+        print(f"  optimizer={optimizer_type}")
         print(f"  arena_size={arena_size}m x {arena_size}m")
         print(f"  predators={predator_count}")
         print(f"  observation={cfg_get(cfg, 'observation.type')}")
         print(f"  policy={policy_module_name}")
         print(f"  N_WEIGHTS={n_weights}")
         print(f"  startup_delay={cfg_get(cfg, 'startup.controller_delay', 2.0)}")
+        print(f"  episode_duration={cfg_get(cfg, 'training.episode_duration', 35.0)}")
+        print(f"  evals_per_candidate={cfg_get(cfg, 'training.evals_per_candidate', 2)}")
         print("  fitness=paper ground-truth fitness for all modes")
         print("  scripted_spread=disabled")
 
-        for generation in range(generations):
-            print(f"\n========== GENERATION {generation} ==========")
-            fitnesses = []
-            records = []
-
-            for candidate_id, genome in enumerate(population):
-                fitness, episode_id = evaluate_genome(genome, episode_id, cfg, policy_path)
-                fitnesses.append(fitness)
-                loss = -fitness
-
-                if fitness > best_fitness:
-                    best_fitness = fitness
-                    np.save(best_policy_path, np.array(genome, dtype=np.float32))
-                    print(f"NEW BEST FITNESS: {best_fitness:.4f}")
-
-                records.append((generation, episode_id, candidate_id, fitness, loss))
-
-            fitnesses = np.array(fitnesses)
-            gen_best = float(np.max(fitnesses))
-            gen_mean = float(np.mean(fitnesses))
-            gen_std = float(np.std(fitnesses))
-
-            for generation_, episode_, candidate_, fitness_, loss_ in records:
-                append_training_log(csv_path, [
-                    generation_, episode_, candidate_, fitness_, loss_,
-                    gen_best, gen_mean, gen_std, best_fitness,
-                ])
-
-            plot_training_curve(csv_path, plot_path)
-            print(
-                f"Generation {generation}: best={gen_best:.4f}, mean={gen_mean:.4f}, "
-                f"std={gen_std:.4f}, best_so_far={best_fitness:.4f}"
+        if optimizer_type == "ga":
+            best_fitness = run_ga(
+                cfg=cfg,
+                n_weights=n_weights,
+                policy_path=policy_path,
+                best_policy_path=best_policy_path,
+                csv_path=csv_path,
+                plot_path=plot_path,
             )
-
-            sorted_idx = np.argsort(fitnesses)[::-1]
-            elites = population[sorted_idx[:elites_n]].copy()
-            new_population = [elite.copy() for elite in elites]
-
-            while len(new_population) < pop_size:
-                parent_ids = np.random.choice(elites_n, size=2, replace=True)
-                child = make_child(elites[parent_ids[0]], elites[parent_ids[1]], n_weights, mutation_sigma)
-                new_population.append(child)
-
-            population = np.array(new_population)
+        elif optimizer_type in {"cmaes", "cma-es", "cma"}:
+            best_fitness = run_cmaes(
+                cfg=cfg,
+                n_weights=n_weights,
+                policy_path=policy_path,
+                best_policy_path=best_policy_path,
+                csv_path=csv_path,
+                plot_path=plot_path,
+            )
+        else:
+            raise ValueError(f"Unknown optimizer.type: {optimizer_type}")
 
         print("\nTraining finished.")
         print(f"Best fitness: {best_fitness:.4f}")
