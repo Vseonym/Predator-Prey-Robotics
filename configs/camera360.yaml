@@ -35,10 +35,9 @@ prey:
 training:
   pop_size: 13
   generations: 100
-  evals_per_candidate: 1
+  evals_per_candidate: 2
   episode_duration: 30.0
   sample_dt: 0.2
-
 
 startup:
   controller_delay: 2.0
