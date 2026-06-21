@@ -26,7 +26,7 @@ class Camera360Observation:
         self.predator_count = predator_count
         self.bridge = CvBridge()
 
-        self.camera_names = ["camera", "camera_left", "camera_right", "camera_rear"]
+        self.camera_names = ["camera_front_sensor", "camera_left_sensor", "camera_right_sensor", "camera_rear_sensor"]
         self.frames = {name: None for name in self.camera_names}
 
         for cam in self.camera_names:
@@ -45,10 +45,10 @@ class Camera360Observation:
         return math.sqrt(max(0.0, float(area)))
 
     def build_panorama(self):
-        front = self.frames["camera"]
-        left = self.frames["camera_left"]
-        right = self.frames["camera_right"]
-        rear = self.frames["camera_rear"]
+        front = self.frames["camera_front_sensor"]
+        left = self.frames["camera_left_sensor"]
+        right = self.frames["camera_right_sensor"]
+        rear = self.frames["camera_rear_sensor"]
 
         if front is None:
             return None

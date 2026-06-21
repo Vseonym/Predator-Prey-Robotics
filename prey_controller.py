@@ -12,6 +12,12 @@ class GaussianPreyController(Node):
     def __init__(self):
         super().__init__("gaussian_prey_controller")
 
+        # Allow accelerated Gazebo runs to drive prey timing from /clock.
+        try:
+            self.declare_parameter("use_sim_time", True)
+        except Exception:
+            pass
+
         self.robot_name = self.declare_parameter("robot_name", "prey_0").value
         self.predator_count = int(self.declare_parameter("predator_count", 3).value)
         self.declare_parameter("model_states_topic", "/model_states")  # compatibility only
@@ -23,18 +29,18 @@ class GaussianPreyController(Node):
         self.sigma_p = float(self.declare_parameter("sigma_p", 0.25).value)
         self.alpha = float(self.declare_parameter("alpha", 0.1).value)
 
-        self.max_forward_speed = float(self.declare_parameter("max_forward_speed", 0.09).value)
+        self.max_forward_speed = float(self.declare_parameter("max_forward_speed", 0.12).value)
         self.max_angular_speed = float(self.declare_parameter("max_angular_speed", 0.8).value)
 
         self.angular_gain = float(self.declare_parameter("angular_gain", 0.8).value)
-        self.cruise_speed = float(self.declare_parameter("cruise_speed", 0.07).value)
-        self.turn_speed = float(self.declare_parameter("turn_speed", 0.01).value)
+        self.cruise_speed = float(self.declare_parameter("cruise_speed", 0.10).value)
+        self.turn_speed = float(self.declare_parameter("turn_speed", 0.02).value)
 
         self.predator_names = [f"predator_{i}" for i in range(self.predator_count)]
         self.all_robot_names = self.predator_names + [self.robot_name]
         self.odom_store = OdomStore(self, self.all_robot_names)
 
-        self.start_time = self.now_seconds()
+        self.start_time = None
         self.cmd_pub = self.create_publisher(Twist, f"/{self.robot_name}/cmd_vel", 10)
         self.create_timer(0.1, self.control_loop)
 
@@ -66,38 +72,31 @@ class GaussianPreyController(Node):
     def danger_gradient(self, prey_x, prey_y, predator_positions):
         half = self.arena_size / 2.0
 
-        gx = (
-            self.wall_gradient(prey_x, -half)
-            + self.wall_gradient(prey_x, half)
-        )
-
-        gy = (
-            self.wall_gradient(prey_y, -half)
-            + self.wall_gradient(prey_y, half)
-        )
+        gx = self.wall_gradient(prey_x, -half) + self.wall_gradient(prey_x, half)
+        gy = self.wall_gradient(prey_y, -half) + self.wall_gradient(prey_y, half)
 
         for pred_x, pred_y in predator_positions:
-            gx += self.alpha * self.predator_gradient_component(
-                prey_x, prey_y, pred_x, pred_y, "x"
-            )
-            gy += self.alpha * self.predator_gradient_component(
-                prey_x, prey_y, pred_x, pred_y, "y"
-            )
+            gx += self.alpha * self.predator_gradient_component(prey_x, prey_y, pred_x, pred_y, "x")
+            gy += self.alpha * self.predator_gradient_component(prey_x, prey_y, pred_x, pred_y, "y")
 
         return gx, gy
 
     def publish_cmd(self, linear, angular):
         cmd = Twist()
         cmd.linear.x = self.clamp(linear, 0.0, self.max_forward_speed)
-        cmd.angular.z = self.clamp(
-            angular,
-            -self.max_angular_speed,
-            self.max_angular_speed,
-        )
+        cmd.angular.z = self.clamp(angular, -self.max_angular_speed, self.max_angular_speed)
         self.cmd_pub.publish(cmd)
 
     def control_loop(self):
-        if self.now_seconds() - self.start_time < self.start_delay:
+        now = self.now_seconds()
+        if now <= 0.0:
+            self.publish_cmd(0.0, 0.0)
+            return
+
+        if self.start_time is None:
+            self.start_time = now
+
+        if now - self.start_time < self.start_delay:
             self.publish_cmd(0.0, 0.0)
             return
 
@@ -125,7 +124,6 @@ class GaussianPreyController(Node):
             return
 
         gx, gy = self.danger_gradient(prey_x, prey_y, predator_positions)
-
         escape_x = -gx
         escape_y = -gy
 
@@ -136,11 +134,7 @@ class GaussianPreyController(Node):
         target_angle = math.atan2(escape_y, escape_x)
         error = angle_wrap(target_angle - prey_yaw)
 
-        angular = self.clamp(
-            self.angular_gain * error,
-            -self.max_angular_speed,
-            self.max_angular_speed,
-        )
+        angular = self.clamp(self.angular_gain * error, -self.max_angular_speed, self.max_angular_speed)
 
         alignment = max(0.0, 1.0 - abs(error) / math.pi)
         linear = self.turn_speed + alignment * (self.cruise_speed - self.turn_speed)

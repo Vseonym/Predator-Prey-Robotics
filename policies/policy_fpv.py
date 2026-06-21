@@ -29,5 +29,5 @@ def nn_forward(features, genome, max_wheel_speed=8.0):
     w1, b1, w2, b2 = unpack_weights(genome)
     x = np.asarray(features, dtype=np.float32)
     h = np.tanh(x @ w1 + b1)
-    out = np.tanh(h @ w2 + b2)
+    out = np.tanh(0.25 * (h @ w2 + b2))
     return float(out[0] * max_wheel_speed), float(out[1] * max_wheel_speed)

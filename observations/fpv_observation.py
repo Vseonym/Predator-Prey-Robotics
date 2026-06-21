@@ -32,7 +32,7 @@ class FPVObservation:
 
         node.create_subscription(
             Image,
-            f"/{robot_name}/camera/image_raw",
+            f"/{robot_name}/camera_front_sensor/image_raw",
             self.image_callback,
             10,
         )

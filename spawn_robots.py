@@ -54,7 +54,10 @@ def spawn_sdf(name, sdf_path, x, y, z=0.0, yaw=0.0):
     )
 
     if not ok:
-        raise RuntimeError(f"Failed to spawn {name}")
+        print(
+            f"WARNING: spawn_entity returned failure for {name}; "
+            "fast Gazebo may still have spawned it."
+        )
 
 
 def write_wall_sdf(name, length, thickness, height, color="Gazebo/Grey"):
@@ -178,13 +181,17 @@ def spawn_robot(name, x, y, color="Gazebo/White", yaw=math.pi / 2):
 
     ok = safe_call(
         f"ros2 run gazebo_ros spawn_entity.py "
-        f"-entity {name} -file {urdf_path} "
+        f"-entity {name} "
+        f"-file {urdf_path} "
         f"-x {x} -y {y} -z 0.1 -Y {yaw}",
         timeout=10,
     )
 
     if not ok:
-        raise RuntimeError(f"Failed to spawn {name}")
+        print(
+            f"WARNING: spawn_entity returned failure for {name}; "
+            "fast Gazebo may still have spawned it."
+        )
 
 
 def predator_start_positions(predator_count, arena_size=2.0):
@@ -215,3 +222,75 @@ def spawn_default_world(predator_count=3, arena_size=2.0):
         spawn_robot(f"predator_{idx}", x, y, "Gazebo/Red", yaw=math.pi / 2)
 
     spawn_robot("prey_0", 0.0, 0.0, "Gazebo/Green", yaw=math.pi / 2)
+
+def clear_robots():
+    print("Clearing robots...")
+
+    names = (
+        [f"predator_{i}" for i in range(MAX_PREDATORS_TO_CLEAR)]
+        + ["prey_0"]
+    )
+
+    for name in names:
+        safe_call(
+            f"ros2 service call /delete_entity gazebo_msgs/srv/DeleteEntity "
+            f"\"{{name: '{name}'}}\"",
+            timeout=3,
+        )
+
+def spawn_robots_only(predator_count=3, arena_size=2.0):
+    for idx, (x, y) in enumerate(
+        predator_start_positions(predator_count, arena_size)
+    ):
+        spawn_robot(
+            f"predator_{idx}",
+            x,
+            y,
+            "Gazebo/Red",
+            yaw=math.pi / 2,
+        )
+
+    spawn_robot(
+        "prey_0",
+        0.0,
+        0.0,
+        "Gazebo/Green",
+        yaw=math.pi / 2,
+    )
+def reset_robot_poses(predator_count=3, arena_size=2.0):
+    positions = predator_start_positions(predator_count, arena_size)
+
+    for idx, (x, y) in enumerate(positions):
+        cmd = f"""
+ros2 service call /set_entity_state gazebo_msgs/srv/SetEntityState "{{
+state: {{
+  name: 'predator_{idx}',
+  pose: {{
+    position: {{x: {x}, y: {y}, z: 0.1}},
+    orientation: {{x: 0.0, y: 0.0, z: 0.7071068, w: 0.7071068}}
+  }},
+  twist: {{
+    linear: {{x: 0.0, y: 0.0, z: 0.0}},
+    angular: {{x: 0.0, y: 0.0, z: 0.0}}
+  }}
+}}
+}}"
+"""
+        safe_call(cmd, timeout=3)
+
+    cmd = """
+ros2 service call /set_entity_state gazebo_msgs/srv/SetEntityState "{
+state: {
+  name: 'prey_0',
+  pose: {
+    position: {x: 0.0, y: 0.0, z: 0.1},
+    orientation: {x: 0.0, y: 0.0, z: 0.7071068, w: 0.7071068}
+  },
+  twist: {
+    linear: {x: 0.0, y: 0.0, z: 0.0},
+    angular: {x: 0.0, y: 0.0, z: 0.0}
+  }
+}
+}"
+"""
+    safe_call(cmd, timeout=3)

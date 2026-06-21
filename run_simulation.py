@@ -15,7 +15,11 @@ import rclpy
 
 from config_utils import load_config, cfg_get
 from fitness import PaperFitnessEvaluator
-from spawn_robots import clear_simulation, reset_world, spawn_default_world
+from spawn_robots import (
+    clear_simulation,
+    spawn_default_world,
+    reset_robot_poses,
+)
 
 
 processes = []
@@ -42,6 +46,7 @@ def start_controller(name, cfg, policy_path):
         "-p", f"policy_module:={policy_module}",
         "-p", f"model_states_topic:={model_states_topic}",
         "-p", f"startup_delay:={startup_delay}",
+        "-p", f"use_sim_time:={str(cfg_get(cfg, 'simulation.use_sim_time', True)).lower()}",
     ]
     p = subprocess.Popen(args)
     processes.append(p)
@@ -65,6 +70,10 @@ def start_prey_controller(cfg):
         "-p", f"alpha:={cfg_get(cfg, 'prey.alpha', 0.1)}",
         "-p", f"max_forward_speed:={cfg_get(cfg, 'prey.max_forward_speed', 0.12)}",
         "-p", f"max_angular_speed:={cfg_get(cfg, 'prey.max_angular_speed', 1.5)}",
+        "-p", f"angular_gain:={cfg_get(cfg, 'prey.angular_gain', 0.8)}",
+        "-p", f"cruise_speed:={cfg_get(cfg, 'prey.cruise_speed', 0.10)}",
+        "-p", f"turn_speed:={cfg_get(cfg, 'prey.turn_speed', 0.02)}",
+        "-p", f"use_sim_time:={str(cfg_get(cfg, 'simulation.use_sim_time', True)).lower()}",
     ]
     p = subprocess.Popen(args)
     processes.append(p)
@@ -106,6 +115,27 @@ def save_policy(genome, policy_path):
     os.replace(tmp, policy_path)
 
 
+def update_top_policies(top_policies, fitness, genome, limit=5):
+    """Keep the best `limit` policies seen so far."""
+    top_policies.append((float(fitness), np.array(genome, dtype=np.float32).copy()))
+    top_policies.sort(key=lambda item: item[0], reverse=True)
+    del top_policies[limit:]
+
+
+def save_top_policies(top_policies, mode):
+    """Save top policies to training_logs/<mode>/top_policies/."""
+    output_dir = Path("training_logs") / mode / "top_policies"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = []
+    for rank, (fitness, genome) in enumerate(top_policies, start=1):
+        path = output_dir / f"top_{rank}_policy_{mode}_fitness_{fitness:.4f}.npy"
+        np.save(path, genome)
+        saved_paths.append(path)
+
+    return saved_paths
+
+
 def run_episode(genome, episode_id, cfg, policy_path):
     print(f"\n=== Episode {episode_id} ===")
     predator_count = int(cfg_get(cfg, "predators.count", 3))
@@ -113,29 +143,47 @@ def run_episode(genome, episode_id, cfg, policy_path):
     model_states_topic = cfg_get(cfg, "fitness.model_states_topic", "/model_states")
     controller_startup_delay = float(cfg_get(cfg, "startup.controller_delay", 2.0))
 
-    stop_sleep = float(cfg_get(cfg, "timing.stop_sleep", 0.2))
-    reset_sleep = float(cfg_get(cfg, "timing.reset_sleep", 0.8))
-    policy_sleep = float(cfg_get(cfg, "timing.policy_sleep", 0.05))
+    # These are real-time sleeps for OS/process/service stability only.
+    # Episode duration and controller startup are handled with simulation time.
+    stop_sleep = float(cfg_get(cfg, "timing.stop_sleep", 0.05))
+    reset_sleep = float(cfg_get(cfg, "timing.reset_sleep", 0.10))
+    policy_sleep = float(cfg_get(cfg, "timing.policy_sleep", 0.02))
+    process_start_wall_sleep = float(cfg_get(cfg, "timing.process_start_wall_sleep", 0.20))
 
     stop_all()
     time.sleep(stop_sleep)
 
-    reset_world()
+    stop_robots(predator_count)
+    time.sleep(0.05)
+
+    reset_robot_poses(
+        predator_count=predator_count,
+        arena_size=float(cfg_get(cfg, "arena.size", 2.0)),
+    )
+
     time.sleep(reset_sleep)
 
     save_policy(genome, policy_path)
     time.sleep(policy_sleep)
 
-    fitness_node = PaperFitnessEvaluator(names, model_states_topic=model_states_topic)
+    fitness_node = PaperFitnessEvaluator(
+        names,
+        model_states_topic=model_states_topic,
+        use_sim_time=bool(cfg_get(cfg, "simulation.use_sim_time", True)),
+    )
 
     try:
         for name in names:
             start_controller(name, cfg, policy_path)
         start_prey_controller(cfg)
 
-        # Give all controller processes/subscriptions/publishers time to start.
-        # Fitness starts after this delay, so no spread warmup is needed.
-        time.sleep(controller_startup_delay)
+        # Give subprocesses a small amount of wall-clock time to start.
+        # Then wait controller_startup_delay in simulation time.
+        time.sleep(process_start_wall_sleep)
+        fitness_node.wait_sim_time(
+            controller_startup_delay,
+            timeout_wall=float(cfg_get(cfg, "timing.startup_timeout_wall", 10.0)),
+        )
 
         fitness = fitness_node.evaluate(
             duration=float(cfg_get(cfg, "training.episode_duration", 35.0)),
@@ -173,7 +221,7 @@ def init_training_log(log_dir, optimizer_type):
         writer.writerow([
             "optimizer", "generation", "episode", "candidate", "fitness", "loss",
             "generation_best_fitness", "generation_mean_fitness", "generation_std_fitness",
-            "best_so_far_fitness",
+            "best_so_far_fitness", "sigma",
         ])
     return csv_path
 
@@ -225,6 +273,7 @@ def run_ga(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
 
     best_fitness = -999999.0
     episode_id = 0
+    top_policies = []
 
     population = np.random.normal(0.0, init_sigma, size=(pop_size, n_weights))
 
@@ -243,6 +292,7 @@ def run_ga(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
                 np.save(best_policy_path, np.array(genome, dtype=np.float32))
                 print(f"NEW BEST FITNESS: {best_fitness:.4f}")
 
+            update_top_policies(top_policies, fitness, genome, limit=5)
             records.append((generation, episode_id, candidate_id, fitness, loss))
 
         fitnesses = np.array(fitnesses)
@@ -253,7 +303,7 @@ def run_ga(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
         for generation_, episode_, candidate_, fitness_, loss_ in records:
             append_training_log(csv_path, [
                 "ga", generation_, episode_, candidate_, fitness_, loss_,
-                gen_best, gen_mean, gen_std, best_fitness,
+                gen_best, gen_mean, gen_std, best_fitness, "",
             ])
 
         plot_training_curve(csv_path, plot_path, "ga")
@@ -277,6 +327,11 @@ def run_ga(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path):
             new_population.append(child)
 
         population = np.array(new_population)
+
+    saved_paths = save_top_policies(top_policies, cfg_get(cfg, "experiment.mode", "experiment"))
+    print("Top policies saved:")
+    for path in saved_paths:
+        print(f"  {path}")
 
     return best_fitness
 
@@ -305,6 +360,7 @@ def run_cmaes(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path
 
     best_fitness = -999999.0
     episode_id = 0
+    top_policies = []
 
     for generation in range(generations):
         print(f"\n========== GENERATION {generation} (CMA-ES) ==========")
@@ -327,6 +383,7 @@ def run_cmaes(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path
                 np.save(best_policy_path, genome)
                 print(f"NEW BEST FITNESS: {best_fitness:.4f}")
 
+            update_top_policies(top_policies, fitness, genome, limit=5)
             records.append((generation, episode_id, candidate_id, fitness, loss))
 
         es.tell(solutions, losses)
@@ -339,7 +396,7 @@ def run_cmaes(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path
         for generation_, episode_, candidate_, fitness_, loss_ in records:
             append_training_log(csv_path, [
                 "cmaes", generation_, episode_, candidate_, fitness_, loss_,
-                gen_best, gen_mean, gen_std, best_fitness,
+                gen_best, gen_mean, gen_std, best_fitness, es.sigma,
             ])
 
         plot_training_curve(csv_path, plot_path, "cmaes")
@@ -348,8 +405,30 @@ def run_cmaes(cfg, n_weights, policy_path, best_policy_path, csv_path, plot_path
             f"std={gen_std:.4f}, best_so_far={best_fitness:.4f}, sigma={es.sigma:.4f}"
         )
 
+    saved_paths = save_top_policies(top_policies, cfg_get(cfg, "experiment.mode", "experiment"))
+    print("Top policies saved:")
+    for path in saved_paths:
+        print(f"  {path}")
+
     return best_fitness
 
+def stop_robots(predator_count):
+    robot_names = predator_names(predator_count) + ["prey_0"]
+
+    for robot_name in robot_names:
+        subprocess.run(
+            [
+                "ros2",
+                "topic",
+                "pub",
+                "--once",
+                f"/{robot_name}/cmd_vel",
+                "geometry_msgs/msg/Twist",
+                "{}",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 def main():
     parser = argparse.ArgumentParser()
@@ -378,10 +457,10 @@ def main():
     try:
         print("Clearing and spawning simulation...")
         clear_simulation()
-        time.sleep(float(cfg_get(cfg, "timing.clear_sleep", 1.0)))
+        time.sleep(float(cfg_get(cfg, "timing.clear_sleep", 0.2)))
 
         spawn_default_world(predator_count=predator_count, arena_size=arena_size)
-        time.sleep(float(cfg_get(cfg, "timing.spawn_sleep", 2.0)))
+        time.sleep(float(cfg_get(cfg, "timing.spawn_sleep", 0.5)))
 
         print(f"\nExperiment mode: {mode}")
         print(f"  optimizer={optimizer_type}")
@@ -390,7 +469,8 @@ def main():
         print(f"  observation={cfg_get(cfg, 'observation.type')}")
         print(f"  policy={policy_module_name}")
         print(f"  N_WEIGHTS={n_weights}")
-        print(f"  startup_delay={cfg_get(cfg, 'startup.controller_delay', 2.0)}")
+        print(f"  startup_delay={cfg_get(cfg, 'startup.controller_delay', 2.0)} sim seconds")
+        print(f"  use_sim_time={cfg_get(cfg, 'simulation.use_sim_time', True)}")
         print(f"  episode_duration={cfg_get(cfg, 'training.episode_duration', 35.0)}")
         print(f"  evals_per_candidate={cfg_get(cfg, 'training.evals_per_candidate', 2)}")
         print("  fitness=paper ground-truth fitness for all modes")

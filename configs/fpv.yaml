@@ -41,10 +41,14 @@ training:
 
 startup:
   controller_delay: 2.0
+simulation:
+  use_sim_time: true
 
 timing:
-  clear_sleep: 1.0
-  spawn_sleep: 2.0
-  stop_sleep: 0.2
-  reset_sleep: 0.8
-  policy_sleep: 0.05
+  clear_sleep: 0.2
+  spawn_sleep: 0.5
+  stop_sleep: 0.05
+  reset_sleep: 0.10
+  policy_sleep: 0.02
+  process_start_wall_sleep: 0.20
+  startup_timeout_wall: 10.0
