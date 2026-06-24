@@ -35,7 +35,7 @@ class NNController(Node):
         self.wheel_separation = 0.0935
         self.max_wheel_omega = 8.0
         self.max_linear = 0.08
-        self.max_angular = 2.0
+        self.max_angular = 1.0
 
         self.policy = importlib.import_module(self.policy_module_name)
         self.genome = self.load_policy()
