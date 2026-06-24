@@ -1,0 +1,11 @@
+model,policy_file,policy_sha256,episode,fitness,trajectory_file,completed_at_utc
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,1,3.5608361424,trajectories/episode_01.csv,2026-06-24T20:42:32.314492+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,2,3.7645417095,trajectories/episode_02.csv,2026-06-24T20:42:59.858593+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,3,2.7933146982,trajectories/episode_03.csv,2026-06-24T20:43:25.970525+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,4,3.0545777148,trajectories/episode_04.csv,2026-06-24T20:43:52.051512+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,5,2.7569300405,trajectories/episode_05.csv,2026-06-24T20:44:18.498857+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,6,3.5469485382,trajectories/episode_06.csv,2026-06-24T20:44:44.457808+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,7,2.5098811250,trajectories/episode_07.csv,2026-06-24T20:45:10.613151+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,8,2.5573962590,trajectories/episode_08.csv,2026-06-24T20:45:35.796654+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,9,2.4769838057,trajectories/episode_09.csv,2026-06-24T20:45:59.814362+00:00
+privileged,selected_policy_privileged.npy,69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e,10,3.6766323843,trajectories/episode_10.csv,2026-06-24T20:46:25.659619+00:00

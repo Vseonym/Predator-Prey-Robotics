@@ -1,0 +1,13 @@
+{
+  "model": "camera360",
+  "policy_file": "selected_policy_camera360.npy",
+  "policy_path": "/home/george/ros2_ws/src/Predator-Prey-Robotics/results/controller_selection/selected_policy_camera360.npy",
+  "policy_sha256": "40c69c5e88f129c9f42cf834983039d50ea3c27d152e7f7d501a5775e9f90632",
+  "episodes": 10,
+  "mean_fitness": 2.88563400583,
+  "sample_std_fitness": 0.449776966387197,
+  "median_fitness": 2.79987085865,
+  "min_fitness": 2.3506225848,
+  "max_fitness": 3.8484430406,
+  "created_at_utc": "2026-06-24T20:24:24.661466+00:00"
+}

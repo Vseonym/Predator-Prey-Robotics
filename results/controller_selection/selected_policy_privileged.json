@@ -1,0 +1,18 @@
+{
+  "model": "privileged",
+  "policy_rank": 2,
+  "policy_file": "top_2_policy_privileged_fitness_4.9744.npy",
+  "policy_sha256": "69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e",
+  "training_fitness": 4.9744,
+  "episodes": 10,
+  "mean_fitness": 3.1609929994200003,
+  "sample_std_fitness": 0.39235991876570825,
+  "min_fitness": 2.5113846954,
+  "max_fitness": 3.6022607657,
+  "selected": true,
+  "selected_policy_output": "/home/george/ros2_ws/src/Predator-Prey-Robotics/results/controller_selection/selected_policy_privileged.npy",
+  "config": "/home/george/ros2_ws/src/Predator-Prey-Robotics/configs/privileged.yaml",
+  "episodes_per_policy": 10,
+  "selection_rule": "highest mean fitness; ties resolved by lower sample standard deviation, then better training rank",
+  "created_at_utc": "2026-06-24T18:32:37.915417+00:00"
+}

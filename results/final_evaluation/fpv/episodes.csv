@@ -1,0 +1,11 @@
+model,policy_file,policy_sha256,episode,fitness,trajectory_file,completed_at_utc
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,1,2.9445657097,trajectories/episode_01.csv,2026-06-24T20:14:25.896367+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,2,2.0325513073,trajectories/episode_02.csv,2026-06-24T20:14:52.336238+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,4,2.4489489472,trajectories/episode_04.csv,2026-06-24T20:15:47.341430+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,5,2.9143519805,trajectories/episode_05.csv,2026-06-24T20:16:13.785952+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,6,2.2706922970,trajectories/episode_06.csv,2026-06-24T20:16:40.382305+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,7,2.8882589374,trajectories/episode_07.csv,2026-06-24T20:17:06.627992+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,8,3.3131531128,trajectories/episode_08.csv,2026-06-24T20:17:32.469219+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,9,2.6597392781,trajectories/episode_09.csv,2026-06-24T20:17:58.275651+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,10,2.0934781727,trajectories/episode_10.csv,2026-06-24T20:18:25.351918+00:00
+fpv,selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,3,2.9123339159,trajectories/episode_03.csv,2026-06-24T20:48:45.013374+00:00

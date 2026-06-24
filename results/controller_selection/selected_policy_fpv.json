@@ -1,0 +1,18 @@
+{
+  "model": "fpv",
+  "policy_rank": 3,
+  "policy_file": "top_3_policy_fpv_fitness_4.2889.npy",
+  "policy_sha256": "932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41",
+  "training_fitness": 4.2889,
+  "episodes": 10,
+  "mean_fitness": 2.7721606911000003,
+  "sample_std_fitness": 0.529463176429979,
+  "min_fitness": 2.1427533143,
+  "max_fitness": 3.9375241675,
+  "selected": true,
+  "selected_policy_output": "/home/george/ros2_ws/src/Predator-Prey-Robotics/results/controller_selection/selected_policy_fpv.npy",
+  "config": "/home/george/ros2_ws/src/Predator-Prey-Robotics/configs/fpv.yaml",
+  "episodes_per_policy": 10,
+  "selection_rule": "highest mean fitness; ties resolved by lower sample standard deviation, then better training rank",
+  "created_at_utc": "2026-06-24T19:54:28.360463+00:00"
+}

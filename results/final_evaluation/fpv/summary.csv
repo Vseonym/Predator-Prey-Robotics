@@ -1,0 +1,2 @@
+model,policy_file,policy_path,policy_sha256,episodes,mean_fitness,sample_std_fitness,median_fitness,min_fitness,max_fitness,created_at_utc
+fpv,selected_policy_fpv.npy,/home/george/ros2_ws/src/Predator-Prey-Robotics/results/controller_selection/selected_policy_fpv.npy,932ef4e3c502e1135f8c9a7ca852eb5df408a7f77488ea0ed348d6f2196d7e41,10,2.64780736586,0.4212826250449212,2.77399910775,2.0325513073,3.3131531128,2026-06-24T20:48:45.014005+00:00

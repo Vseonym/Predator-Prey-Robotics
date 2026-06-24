@@ -1,0 +1,13 @@
+{
+  "model": "privileged",
+  "policy_file": "selected_policy_privileged.npy",
+  "policy_path": "/home/george/ros2_ws/src/Predator-Prey-Robotics/results/controller_selection/selected_policy_privileged.npy",
+  "policy_sha256": "69eb514981e699b34901b3a4892c43874a3c7bad1764e557c52f2f2f41ac005e",
+  "episodes": 10,
+  "mean_fitness": 3.0698042417600004,
+  "sample_std_fitness": 0.518733504504087,
+  "median_fitness": 2.9239462065,
+  "min_fitness": 2.4769838057,
+  "max_fitness": 3.7645417095,
+  "created_at_utc": "2026-06-24T20:46:25.660318+00:00"
+}
