@@ -13,6 +13,14 @@ The project compares three observation models for evolved predator controllers i
 
 Three homogeneous Thymio predators share the same 3–4–2 feedforward neural-network controller. Its 26 parameters are optimised with CMA-ES while the arena, prey controller, fitness function, starting positions, and training settings are kept constant across the three observation conditions.
 
+## Demonstration videos
+
+Representative videos of the selected controllers are available here:
+
+- [Privileged observation model](https://drive.google.com/file/d/1ZTcrNS6wP4HK0yQPTLmrT94bm4lkLvbz/view?usp=sharing)
+- [360° camera observation model](https://drive.google.com/file/d/1I6WCGM6_v2XeUv8HihYvLw4ROklaAZl8/view?usp=sharing)
+- [First-person view (FPV) observation model](https://drive.google.com/file/d/1SF235qf3CRbtEW0J6AnoYVdioVp4mKDp/view?usp=sharing)
+
 ## Repository structure
 
 ```text
