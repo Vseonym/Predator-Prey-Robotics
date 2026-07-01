@@ -164,7 +164,8 @@ def main() -> int:
     if "prey_0" not in grouped:
         raise RuntimeError("No prey trajectory was found.")
 
-    figure, axis = plt.subplots(figsize=(7.0, 7.0))
+    # Use a wider figure so the legend can sit outside the arena.
+    figure, axis = plt.subplots(figsize=(8.8, 7.0))
 
     half = arena_size / 2.0
     axis.add_patch(
@@ -271,18 +272,29 @@ def main() -> int:
     axis.set_xlim(-half - margin, half + margin)
     axis.set_ylim(-half - margin, half + margin)
     axis.grid(True, alpha=0.25)
-    axis.legend(loc="best", frameon=True)
-
-    axis.text(
-        0.02,
-        0.02,
-        "Circle = start, X = end",
-        transform=axis.transAxes,
-        fontsize=9,
-        verticalalignment="bottom",
+    # Put the legend outside the plotting area so it does not cover any
+    # trajectories or the arena boundary.
+    axis.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
     )
 
-    figure.tight_layout()
+    # Place the start/end explanation below the axes instead of on top of
+    # the lower arena boundary.
+    figure.text(
+        0.40,
+        0.025,
+        "Circle = start, X = end",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+    )
+
+    # Reserve space on the right for the legend and at the bottom for the
+    # start/end explanation.
+    figure.tight_layout(rect=(0.0, 0.06, 0.80, 1.0))
 
     if args.output:
         output_path = Path(args.output).expanduser()
